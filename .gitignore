@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.qavenv/
+
+# Secrets
+.env
+
+# Built index (disposable build artifact — rebuild with scripts/ingest_grs.py)
+backend/index/*.index
+backend/index/*.json
+
+# Source PDFs (public but large; keep the folder, not the files)
+backend/data/grs/*.pdf
+
+# Model / HF cache
+.cache/
+*.bin
+
+# OS / editor
+.DS_Store
+*.swp

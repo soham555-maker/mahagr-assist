@@ -1,0 +1,12 @@
+[project]
+name = "mahagr-assist-backend"
+version = "0.1.0"
+description = "MahaGR Assist — multilingual grounded RAG over Maharashtra Government documents"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["engine"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

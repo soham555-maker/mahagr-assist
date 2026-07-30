@@ -1,0 +1,113 @@
+# MahaGR Assist — शासन निर्णय सहाय्यक
+
+A **grounded, multilingual** question-answering assistant over Maharashtra
+Government documents — Government Resolutions (GRs), circulars, notifications
+and office orders. Ask in **English or Marathi**; get answers pulled *only* from
+the source documents, with a citation on every claim, in the language you asked.
+
+> VJTI AI Hackathon 2026 · Problem Statement 3.
+
+## Grounded · Multilingual · Explainable
+
+- **Grounded** — answers come only from retrieved GR text; when the documents
+  don't cover a question the assistant says so instead of guessing.
+- **Multilingual** — one shared vector space (bge-m3) means an English query
+  can retrieve a Marathi GR and vice-versa; answers come back in the question's
+  language, preserving official terminology.
+- **Explainable** — every answer carries `[n]` citations that resolve to the
+  exact source GR (and page).
+
+## Provenance / disclosure
+
+This project is built on **our own open Retrieval-Augmented Generation core**
+(originally written for a document-QA project). That core — hybrid retrieval
+(dense + BM25), cross-encoder reranking, table/figure handling, grounded
+generation with citation checking — is reused here as an authored library.
+
+**The hackathon work is this repository's new domain layer:** multilingual
+retrieval (bge-m3 + bge-reranker-v2-m3), Marathi/English **OCR** for scanned
+GRs, Unicode-aware keyword search for Devanagari, and Government-document
+question answering. See `git log` for what was built during the event.
+
+## Architecture
+
+```
+INGEST (offline)   Documents → OCR (Marathi+English) → chunk (+tables) → embed (bge-m3)
+KNOWLEDGE STORE    FAISS vector index + metadata
+QUERY (online)     query (EN/Marathi) → hybrid search (BM25+dense) → rerank → grounded answer (cited)
+```
+
+## What changed from the English base (the multilingual swap)
+
+All four coupled settings live in one file, [`backend/engine/config.py`](backend/engine/config.py):
+
+| Setting | Was (English) | Now (multilingual) |
+|---|---|---|
+| Embedding model | `bge-small-en-v1.5` | `BAAI/bge-m3` |
+| Embedding dim | 384 | 1024 |
+| Query prefix | `"Represent this sentence…"` | `""` (bge-m3 needs none) |
+| Reranker | `ms-marco-MiniLM` (EN) | `BAAI/bge-reranker-v2-m3` |
+
+Plus: **OCR fallback** for scanned pages (`engine/ingest._ocr_page`), and a
+**Unicode-aware BM25 tokenizer** (`engine/hybrid.tokenize`) that keeps whole
+Devanagari words instead of dropping or shattering them.
+
+## Setup
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# OCR (only needed to read scanned GRs) — system Tesseract + language data:
+#   Arch/CachyOS: sudo pacman -S tesseract tesseract-data-mar tesseract-data-hin tesseract-data-eng
+#   Debian/Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-mar tesseract-ocr-hin
+
+cp .env.example .env    # then paste your GROQ_API_KEY (free at console.groq.com)
+```
+
+> First run downloads the models (bge-m3 ≈ 2.2 GB, bge-reranker-v2-m3 ≈ 2.3 GB).
+
+## Quickstart
+
+```bash
+# 1. Drop GR PDFs (born-digital or scanned) into backend/data/grs/
+#    Good source: https://github.com/orgpedia/mahGRs  and  https://gr.maharashtra.gov.in
+
+# 2. Build the index
+python scripts/ingest_grs.py
+
+# 3. Ask — in English or Marathi
+python scripts/ask.py "What is the DTE admission fee structure?"
+python scripts/ask.py "या शासन निर्णयात कोणती तारीख आहे?"
+python scripts/ask.py            # interactive REPL (keeps conversational memory)
+```
+
+## Known gaps / roadmap (next steps, not yet done)
+
+- ⚠ **Retrieval thresholds are placeholders.** The cosine/rerank cutoffs in
+  `RetrievalConfig` were calibrated for the old English model. Build a small
+  Marathi/English GR gold set (question → expected source GR) and measure
+  relevant-vs-irrelevant score distributions to set the `text_threshold`,
+  `table_threshold` and `rerank_threshold` honestly.
+- **GR-domain metadata** — extract GR number, department, date, category,
+  language per document (currently only the filename is stored).
+- **Officer features** — document comparison and supersede/amend detection
+  (FR 3.5): cheap to add on top of retrieval, high demo value.
+- **Frontend portal** — the officer-facing chat UI (not ported yet).
+- **Tests** — the English base's suite was fixture-bound (arXiv gold set,
+  Supabase, dim 384) and was removed rather than ported half-broken. Write a
+  fresh suite against a GR gold set; the pure functions (chunking, RRF fusion,
+  citation parsing, Devanagari tokenization) are the easy first targets.
+- **Legacy corpus path** — `app/main.py` and `engine/documents.py` still carry
+  the Supabase upload/Storage pipeline from the base. The baseline runs without
+  them (`ingest_grs.py` + `ask.py`); trim or re-point them when building the portal.
+- **Table/figure captions** — `_resolve_caption` matches the English words
+  "Table"/"Figure"; add Marathi equivalents (तक्ता etc.) for Marathi GRs.
+
+## Deployment note
+
+The LLM call is isolated behind `engine/rag.py`, using Groq (fast) for the
+demo. For on-premise / NIC deployment it can be swapped to a local Llama-3 via
+Ollama so no document leaves the department — the rest of the pipeline
+(embedding, retrieval, reranking) already runs fully locally.

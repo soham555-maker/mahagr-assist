@@ -1,0 +1,15 @@
+PyMuPDF>=1.23.0
+sentence-transformers>=3.0.0    # >=3.0 loads bge-m3 dense + bge-reranker-v2-m3
+torch>=2.0.0
+pdfplumber>=0.10.0
+faiss-cpu>=1.8.0
+groq>=1.0.0
+python-dotenv>=1.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+supabase>=2.10.0
+python-multipart>=0.0.9
+pymupdf4llm>=1.28.0
+rank-bm25>=0.2.2
+pytesseract>=0.3.10             # OCR for scanned Marathi/English GRs (needs system tesseract)
+pillow>=10.0.0                  # image handling for the OCR fallback
