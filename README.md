@@ -83,6 +83,20 @@ python scripts/ask.py "या शासन निर्णयात कोणत
 python scripts/ask.py            # interactive REPL (keeps conversational memory)
 ```
 
+### No GR data yet? Smoke-test on the bundled fixtures
+
+Two synthetic Marathi GRs ship in `backend/data/fixtures/` (a fee GR and a
+2024 GR that supersedes it) so you can exercise the whole pipeline immediately:
+
+```bash
+python scripts/ingest_grs.py data/fixtures index
+python scripts/ask.py "What is the OBC diploma fee in 2023?"     # → 6000, cited
+python scripts/ask.py "Which GR supersedes the 2023 fee resolution?"
+```
+
+See [`backend/data/fixtures/README.md`](backend/data/fixtures/README.md) for
+more queries and how to regenerate them.
+
 ## Known gaps / roadmap (next steps, not yet done)
 
 - ⚠ **Retrieval thresholds are placeholders.** The cosine/rerank cutoffs in
