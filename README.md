@@ -48,9 +48,13 @@ All four coupled settings live in one file, [`backend/engine/config.py`](backend
 | Query prefix | `"Represent this sentence…"` | `""` (bge-m3 needs none) |
 | Reranker | `ms-marco-MiniLM` (EN) | `BAAI/bge-reranker-v2-m3` |
 
-Plus: **OCR fallback** for scanned pages (`engine/ingest._ocr_page`), and a
+Plus: **OCR fallback** for scanned pages (`engine/ingest._ocr_page`); a
 **Unicode-aware BM25 tokenizer** (`engine/hybrid.tokenize`) that keeps whole
-Devanagari words instead of dropping or shattering them.
+Devanagari words instead of dropping or shattering them; and **GR metadata
+extraction** (`engine/gr_metadata.py`) that parses each document's number,
+date, department, category, language and cited/superseded GRs from its own
+header text, so citations resolve to a real GR number + date, not just a
+filename.
 
 ## Setup
 
@@ -104,10 +108,11 @@ more queries and how to regenerate them.
   Marathi/English GR gold set (question → expected source GR) and measure
   relevant-vs-irrelevant score distributions to set the `text_threshold`,
   `table_threshold` and `rerank_threshold` honestly.
-- **GR-domain metadata** — extract GR number, department, date, category,
-  language per document (currently only the filename is stored).
 - **Officer features** — document comparison and supersede/amend detection
-  (FR 3.5): cheap to add on top of retrieval, high demo value.
+  (FR 3.5). Groundwork is done: `engine/gr_metadata.py` already parses each GR's
+  `references` and a `supersedes` flag, so a "which GR replaced this one?"
+  feature can read those tags directly. Comparison ("diff GR-A vs GR-B") is the
+  next build on top of retrieval.
 - **Frontend portal** — the officer-facing chat UI (not ported yet).
 - **Tests** — the English base's suite was fixture-bound (arXiv gold set,
   Supabase, dim 384) and was removed rather than ported half-broken. Write a

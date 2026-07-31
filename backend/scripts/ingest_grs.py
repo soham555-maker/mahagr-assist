@@ -20,7 +20,7 @@ import os
 import sys
 import time
 
-from engine import config
+from engine import config, gr_metadata
 from engine.ingest import IngestionPipeline
 from engine.vector_store import FaissStore
 
@@ -41,14 +41,18 @@ def main(pdf_dir="data/grs", index_dir="index"):
         path = os.path.join(pdf_dir, name)
         t0 = time.time()
         try:
+            # Extract text ONCE, parse the GR header from it, then hand the same
+            # pages to process_pdf so scanned PDFs aren't OCR'd twice.
+            pages = pipeline.extract_pages_from_pdf(path)
+            full_text = "\n".join(text for _, text in pages)
+            meta = gr_metadata.extract(full_text)
+            meta.setdefault("title", os.path.splitext(name)[0])  # filename fallback
             chunks = pipeline.process_pdf(
                 path,
                 source_type="gr",
                 include_tables=True,
-                # Minimal metadata for the baseline: the filename is the human
-                # handle for citations. Richer GR metadata (number, department,
-                # date, language) is a later domain step — see README roadmap.
-                extra_metadata={"title": os.path.splitext(name)[0]},
+                extra_metadata=meta,   # GR number, date, department, category, language, ...
+                pages=pages,
             )
         except Exception as e:
             print(f"[{i}/{len(pdfs)}] FAILED  {name}: {e}")
@@ -64,6 +68,11 @@ def main(pdf_dir="data/grs", index_dir="index"):
         n_tab = sum(1 for c in chunks if c["metadata"]["content_type"] == "table")
         print(f"[{i}/{len(pdfs)}] ok      {name}  (+{len(chunks)} chunks, "
               f"{n_tab} table, {time.time() - t0:.1f}s, index now {len(store)})")
+        tags = "  ".join(f"{k}={meta[k]}" for k in ("gr_number", "date", "language") if k in meta)
+        if tags:
+            print(f"          {tags}")
+        if meta.get("supersedes"):
+            print(f"          supersedes: {', '.join(meta.get('references', []))}")
         processed += 1
 
     print("\n" + "=" * 60)

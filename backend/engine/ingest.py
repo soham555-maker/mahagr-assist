@@ -278,12 +278,17 @@ class IngestionPipeline:
         return chunks
 
     def process_pdf(self, pdf_path, chunk_size=250, overlap=50, source_type='corpus',
-                    include_tables=True, extra_metadata=None):
+                    include_tables=True, extra_metadata=None, pages=None):
         """
         Extracts text, chunks it, and embeds each chunk.
         Returns a list of dicts: [{'text', 'embedding', 'metadata'}, ...]
         metadata carries source_file, source_type, chunk_index, page_start, page_end —
         everything Day 3 (FAISS tagging) and Day 12 (plagiarism source citation) need.
+
+        pages, if given, is the already-extracted [(page_no, text), ...] and is
+        used instead of re-reading the PDF — so a caller that has to read the
+        text first (e.g. ingest_grs.py, to parse GR metadata) doesn't pay the
+        extraction (and, for scans, the OCR) cost twice.
 
         extra_metadata (a dict or None) is merged into every chunk's metadata, so
         Day 3 can thread per-paper tags like paper_id/title/topic_group straight
@@ -302,7 +307,8 @@ class IngestionPipeline:
         caption, its data) retrieves as a focused unit. content_type lets retrieval
         (Days 4-5) search or weight the two modalities independently.
         """
-        pages = self.extract_pages_from_pdf(pdf_path)
+        if pages is None:
+            pages = self.extract_pages_from_pdf(pdf_path)
 
         if not any(text.strip() for _, text in pages):
             return []

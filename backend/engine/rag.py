@@ -128,14 +128,18 @@ corpus does not appear to cover this. The closest material found is about \
 
 def format_block(n, hit):
     """One numbered context block with a provenance header. The header is what
-    makes a later [n] citation resolvable to (paper, pages) — and it also
-    tells the model what it's reading (a table row rendering vs. prose)."""
+    makes a later [n] citation resolvable to a source — and it also tells the
+    model what it's reading (a table row rendering vs. prose). For GRs it
+    carries the GR number and date, so the model can cite them precisely and
+    reason about which resolution is newer / supersedes which."""
     m = hit["metadata"]
     pages = (f"page {m['page_start']}" if m["page_start"] == m["page_end"]
              else f"pages {m['page_start']}-{m['page_end']}")
     title = m.get("title") or m.get("source_file", "unknown")
-    return (f"[{n}] ({title} — {m.get('paper_id', '?')}, {pages}, "
-            f"{m['content_type']})\n{hit['text']}")
+    # Prefer the GR number as the document id; fall back to paper_id / filename.
+    doc_id = m.get("gr_number") or m.get("paper_id") or m.get("source_file", "?")
+    ident = " — ".join(p for p in (title, doc_id, m.get("date")) if p)
+    return (f"[{n}] ({ident}, {pages}, {m['content_type']})\n{hit['text']}")
 
 
 def trim_to_budget(chunks, budget):
@@ -279,6 +283,12 @@ def resolve_citations(valid, used_chunks):
             "source_type": m.get("source_type", "corpus"),
             "image_path": m.get("image_path"),   # set for figure/formula chunks; the UI renders it
             "score": used_chunks[n - 1]["score"],
+            # GR-domain provenance (present when ingest parsed it; None otherwise)
+            "gr_number": m.get("gr_number"),
+            "date": m.get("date"),
+            "department": m.get("department"),
+            "language": m.get("language"),
+            "source_file": m.get("source_file"),
         })
     return sources
 
@@ -533,8 +543,10 @@ def print_result(result):
     if result["sources"]:
         print("\n--- sources " + "-" * 60)
         for s in result["sources"]:
-            print(f"  [{s['n']}] {s['title'][:56]}  ({s['paper_id']}, "
-                  f"{s['pages']}, {s['content_type']})")
+            doc_id = s.get("gr_number") or s.get("source_file") or s["paper_id"]
+            date = f", {s['date']}" if s.get("date") else ""
+            print(f"  [{s['n']}] {s['title'][:56]}")
+            print(f"       {doc_id}{date}  ({s['pages']}, {s['content_type']})")
 
     u = result["usage"]
     print(f"\n({u['prompt_tokens']} prompt + {u['completion_tokens']} "
