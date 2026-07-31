@@ -1,0 +1,41 @@
+{
+  "_comment": "Retrieval gold set for MahaGR Assist. Each question names the GR(s) that SHOULD be retrieved, matched by substring against a hit's order_id / gr_number / source_file / title. in_corpus:false questions have no correct source and MUST be abstained on (used to calibrate the refusal threshold). Seeded with real Higher_and_Technical_Education_Department GRs (fetch with the default fetch_mahgrs.py). EXPAND THIS to ~20-30 questions across your ingested corpus for trustworthy threshold calibration — mix English and Marathi, and include hard/near-miss out-of-corpus probes.",
+  "questions": [
+    {
+      "q": "What procedure must a university follow to approve new colleges, faculties and courses under the Kavikulaguru Kalidas Sanskrit University Act?",
+      "lang": "en",
+      "expected": ["201710121514029708", "एनजीसी २०१७"],
+      "in_corpus": true
+    },
+    {
+      "q": "नवीन महाविद्यालये, विद्याशाखा व अभ्यासक्रम मंजुरीसाठी विद्यापीठाने कोणती सुधारित कार्यपद्धती वापरावी?",
+      "lang": "mr",
+      "expected": ["201710121514029708", "एनजीसी २०१७"],
+      "in_corpus": true
+    },
+    {
+      "q": "Continuation of temporary posts in the Directorate of Libraries, Mumbai and its subordinate offices.",
+      "lang": "en",
+      "expected": ["201710121531250208", "मराग्रं-२५११"],
+      "in_corpus": true
+    },
+    {
+      "q": "ग्रंथालय संचालनालयाच्या आधुनिकीकरण व ई-ग्रंथालयात रूपांतर करण्याबाबतचा निर्णय काय आहे?",
+      "lang": "mr",
+      "expected": ["201711061646497708", "मराग्रं २५१७"],
+      "in_corpus": true
+    },
+    {
+      "q": "What is the annual tuition fee for a PhD in aerospace engineering at IIT Bombay?",
+      "lang": "en",
+      "expected": [],
+      "in_corpus": false
+    },
+    {
+      "q": "महाराष्ट्रातील शेतकऱ्यांसाठी कर्जमाफी योजनेची रक्कम किती आहे?",
+      "lang": "mr",
+      "expected": [],
+      "in_corpus": false
+    }
+  ]
+}

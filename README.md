@@ -101,13 +101,39 @@ python scripts/ask.py "Which GR supersedes the 2023 fee resolution?"
 See [`backend/data/fixtures/README.md`](backend/data/fixtures/README.md) for
 more queries and how to regenerate them.
 
+### Real corpus + threshold calibration (Phase 1)
+
+The `orgpedia/mahGRs` dataset already has every GR OCR'd into Marathi + English
+text (no PDF/OCR needed for the corpus — our OCR path is for scanned-PDF demos).
+
+```bash
+# 1. Fetch a real corpus (default: 150 Higher & Technical Education GRs)
+python scripts/fetch_mahgrs.py --count 200          # --dept, --recent, --translations
+
+# 2. Build the index from the text corpus (bge-m3 embeddings)
+python scripts/ingest_text.py data/grs_text index
+
+# 3. Measure retrieval quality + calibrate thresholds against the gold set
+python scripts/eval_retrieval.py                    # reports hit@k + a suggested cutoff
+```
+
+`eval_retrieval.py` retrieves with thresholds OFF to observe raw scores, prints
+hit@1 / hit@5 / MRR, and shows the score gap between what should be KEPT vs
+REJECTED — then suggests where to set `rerank_threshold` (or the cosine
+thresholds with `--no-rerank`). Expand `data/gold/gold.json` to ~20–30 questions
+for a trustworthy number.
+
+> Heavy step: first ingest downloads bge-m3 (~2.2 GB) + bge-reranker-v2-m3
+> (~2.3 GB). Ensure a few GB free (and ideally a GPU) before ingesting.
+
 ## Known gaps / roadmap (next steps, not yet done)
 
-- ⚠ **Retrieval thresholds are placeholders.** The cosine/rerank cutoffs in
-  `RetrievalConfig` were calibrated for the old English model. Build a small
-  Marathi/English GR gold set (question → expected source GR) and measure
-  relevant-vs-irrelevant score distributions to set the `text_threshold`,
-  `table_threshold` and `rerank_threshold` honestly.
+- ⚠ **Thresholds still need calibrating on YOUR corpus.** The harness is ready
+  (`scripts/eval_retrieval.py` + `data/gold/gold.json`) — run it after ingesting
+  a real corpus and set `text_threshold` / `table_threshold` / `rerank_threshold`
+  in `engine/retrieval.py` from its suggested cutoff. They're recall-leaning
+  placeholders until then. Expanding the gold set to ~20–30 questions makes the
+  number trustworthy.
 - **Officer features** — document comparison and supersede/amend detection
   (FR 3.5). Groundwork is done: `engine/gr_metadata.py` already parses each GR's
   `references` and a `supersedes` flag, so a "which GR replaced this one?"

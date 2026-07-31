@@ -16,6 +16,9 @@ backend/index/*.json
 # Source PDFs (public but large; keep the folder, not the files)
 backend/data/grs/*.pdf
 
+# Fetched real corpus from orgpedia/mahGRs (re-fetch with scripts/fetch_mahgrs.py)
+backend/data/grs_text/
+
 # Model / HF cache
 .cache/
 *.bin

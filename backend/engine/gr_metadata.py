@@ -99,23 +99,35 @@ def _language(text):
     return "mr" if deva >= latin else "en"
 
 
-def _references(text):
-    """GR numbers cited in the 'वाचा' / reference section — the documents this
-    GR builds on or replaces. A GR number is a slash-bearing token like
-    'संकीर्ण-२०२३/प्र.क्र.४५/तांशि-४'. Scoped to the reference section so body
-    prose doesn't leak in. De-duplicated, order preserved."""
+def _references(text, own=None):
+    """GR numbers cited in the 'वाचा' / 'संदर्भ' reference section — the
+    documents this GR builds on or replaces. A GR number is a slash-bearing
+    token like 'संकीर्ण-२०२३/प्र.क्र.४५/तांशि-४'. Scoped to the reference
+    section so body prose doesn't leak in; `own` (this GR's own number) is
+    excluded so a document never lists itself. De-duplicated, order preserved."""
     # Terminators must be a section HEADER (word + colon). Without the colon,
     # the '.*?' would stop at the "शासन निर्णय क्रमांक ..." that OPENS the वाचा
     # value itself and capture nothing — the reference lives inside that phrase.
-    m = re.search(rf"(?:वाचा|संदर्भ|Reference|Read)\s*[:：-]?(.*?)(?=\n\s*(?:विषय|प्रस्तावना|शासन निर्णय|Subject|Preamble)\s*[:：]|\Z)",
+    m = re.search(rf"(?:वाचा|संदर्भ|Reference|Read)\s*[:：ःन.\-]?(.*?)(?=\n\s*(?:विषय|प्रस्तावना|शासन निर्णय|Subject|Preamble)\s*[:：ः]|\Z)",
                   text, re.DOTALL)
     scope = m.group(1) if m else ""
     seen, out = set(), []
-    for tok in re.findall(r"[^\s,]*/[^\s,]+", scope):
+    # A GR number token starts with a letter/Devanagari char and contains a
+    # slash — e.g. 'एनजीसी-२०१०/(१९३/१०)'. Requiring the leading char rejects
+    # OCR fragments like '/मशि-४' that a space split off the real number.
+    # NOTE: reference sections are also full of DATES ('दि.०८/०३/२०१७'), which
+    # are slash-bearing too — filter those out so references stay GR numbers.
+    date_tok = re.compile(r"^(?:दि\.?|दिनांक)?\s*[\d०-९]{1,2}[/.\-][\d०-९]{1,2}[/.\-][\d०-९]{2,4}\.?$")
+    for tok in re.findall(r"[A-Za-zऀ-ॿ][^\s,]*/[^\s,]+", scope):
         tok = tok.strip(" .,।")
-        if tok and tok not in seen:
-            seen.add(tok)
-            out.append(tok)
+        if not tok or tok in seen:
+            continue
+        if tok.startswith("दि") or date_tok.match(tok):   # a date, not a GR number
+            continue
+        if own is not None and (tok in own or own in tok):  # never list itself
+            continue
+        seen.add(tok)
+        out.append(tok)
     return out
 
 
@@ -129,9 +141,16 @@ def extract(text):
     """
     meta = {}
 
-    number = _first(rf"{_L_NUMBER}\s*[:：-]?\s*([^\s]+)", text)
+    # GR number: 'शासन निर्णय' immediately followed by क्रमांक/क्र — this anchors
+    # on the MAIN number line and skips reference lines (where a comma follows
+    # 'शासन निर्णय'). Real numbers contain spaces ('एनजीसी २०१७/(२२९/१७)/मशि-४'),
+    # so capture to end of line, not just the first token.
+    number = _first(r"शासन निर्णय\s*(?:क्रमांक|क्र)\s*[.:：ः]*\s*([^\n]+)", text) \
+        or _first(r"(?:Government Resolution No\.?|G\.?\s*R\.?\s*No\.?)\s*[:：]?\s*([^\n]+)", text)
     if number:
-        meta["gr_number"] = number.strip(" .,।")
+        number = re.split(r"\s{2,}|।", number)[0].strip(" .,।-")
+        if number:
+            meta["gr_number"] = number[:80]
 
     date_raw = _first(rf"{_L_DATE}\s*[:：-]?\s*([^\n]+)", text)
     if date_raw:
@@ -147,8 +166,19 @@ def extract(text):
     if dept:
         meta["department"] = " ".join(dept.split())
 
-    subject = _first(rf"{_L_SUBJECT}\s*[:：-]?\s*(.+?)(?=\n\s*{_L_SECTION_END}\s*[:：]|\Z)",
+    # title: prefer an explicit 'विषय:' header — but ONLY as a header (colon
+    # required), so the common noun 'विषय' inside a sentence
+    # ("अभ्यासक्रम, विषय व वाढीव") doesn't get mistaken for one. Many real GRs
+    # have no विषय label and put the subject as the opening line(s); fall back
+    # to the first substantive line for those.
+    subject = _first(rf"{_L_SUBJECT}\s*[:：ः]\s*(.+?)(?=\n\s*{_L_SECTION_END}\s*[:：ः]|\Z)",
                      text, re.DOTALL)
+    if not subject:
+        for line in text.splitlines():
+            s = line.strip()
+            if s and not s.startswith("#") and "महाराष्ट्र शासन" not in s and len(s) > 25:
+                subject = s
+                break
     if subject:
         meta["title"] = " ".join(subject.split())[:300]
 
@@ -162,7 +192,7 @@ def extract(text):
     if lang:
         meta["language"] = lang
 
-    refs = _references(text)
+    refs = _references(text, own=meta.get("gr_number"))
     if refs:
         meta["references"] = refs
 

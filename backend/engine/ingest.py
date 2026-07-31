@@ -355,6 +355,37 @@ class IngestionPipeline:
 
         return results
 
+    @staticmethod
+    def _split_pages(text):
+        """Split already-extracted text into [(page_no, text), ...] on the
+        '# Page N' markers the orgpedia GR .txt files carry, so page provenance
+        survives into citations. Text without markers becomes a single page 1."""
+        parts = re.split(r"(?m)^#\s*Page\s*(\d+)\s*$", text)
+        if len(parts) == 1:
+            return [(1, text)]
+        pages, i = [], 1
+        while i < len(parts):
+            num = int(parts[i])
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+            pages.append((num, body))
+            i += 2
+        return pages or [(1, text)]
+
+    def process_text(self, text, source_file, chunk_size=250, overlap=50,
+                     source_type="gr", extra_metadata=None):
+        """Ingest PRE-EXTRACTED text (e.g. an orgpedia .mr.txt GR that was
+        already OCR'd upstream) — same {text, embedding, metadata} chunk
+        contract as process_pdf, but no PDF/OCR/pdfplumber step. Pages come from
+        the '# Page N' markers; there is no separate table modality (OCR text
+        has no ruled lines), so every chunk is content_type 'text'."""
+        pages = self._split_pages(text)
+        if not any(t.strip() for _, t in pages):
+            return []
+        chunks = self.chunk_pages(pages, chunk_size=chunk_size, overlap=overlap)
+        for c in chunks:
+            c["content_type"] = "text"
+        return self._embed_chunks(chunks, source_file, source_type, extra_metadata)
+
     def _embed_chunks(self, chunks, pdf_path, source_type, extra_metadata):
         """Shared tail of process_pdf/process_pdf_v2: batch-embed every chunk's
         text in ONE encode() call and attach the standard metadata. A chunk may
