@@ -60,8 +60,9 @@ filename.
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate   # 3.11–3.13 (torch/faiss wheels)
 pip install -r requirements.txt
+pip install -e .                 # puts the `engine` package on the path so scripts/ can import it
 
 # OCR (only needed to read scanned GRs) — system Tesseract + language data:
 #   Arch/CachyOS: sudo pacman -S tesseract tesseract-data-mar tesseract-data-hin tesseract-data-eng
