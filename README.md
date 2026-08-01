@@ -143,6 +143,20 @@ python scripts/officer_tools.py related  <gr_id>             # recommend similar
 `supersede` is a pure metadata-graph lookup (no LLM, no key); `related` is
 vector similarity (no key); `summarize`/`explain`/`compare` need `GROQ_API_KEY`.
 
+### API server (Phase 3)
+
+A slim FastAPI (`app/api.py`) loads the index + models once and serves
+everything over HTTP — no Supabase/auth/cloud, on-prem friendly:
+
+```bash
+cd backend && uvicorn app.api:app --reload      # docs at http://127.0.0.1:8000/docs
+```
+
+`GET /health` · `GET /documents` · `GET /documents/{id}/text` · `POST /ask`
+· `POST /summarize` · `POST /explain` · `POST /compare` · `GET /supersede/{id}`
+· `GET /related/{id}`. The no-LLM endpoints (documents, supersede, related,
+health) work without a `GROQ_API_KEY`.
+
 ## Known gaps / roadmap (next steps, not yet done)
 
 - ⚠ **Thresholds still need calibrating on YOUR corpus.** The harness is ready
