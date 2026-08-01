@@ -126,6 +126,22 @@ for a trustworthy number.
 > Heavy step: first ingest downloads bge-m3 (~2.2 GB) + bge-reranker-v2-m3
 > (~2.3 GB). Ensure a few GB free (and ideally a GPU) before ingesting.
 
+### Officer-assistance tools (Phase 2)
+
+Built on the same engine (`engine/officer.py`, CLI `scripts/officer_tools.py`) —
+all grounded and cited, in the question's language:
+
+```bash
+python scripts/officer_tools.py summarize <gr_id>            # plain summary of one GR (FR 3.5.2)
+python scripts/officer_tools.py explain  "<question>"        # answer in simple language (FR 3.5.1)
+python scripts/officer_tools.py compare  <gr_a> <gr_b>       # highlight differences (FR 3.5.3)
+python scripts/officer_tools.py supersede <gr_id>            # which GRs it replaces / is replaced by (FR 3.5.5)
+python scripts/officer_tools.py related  <gr_id>             # recommend similar GRs (FR 3.5.4)
+```
+
+`supersede` is a pure metadata-graph lookup (no LLM, no key); `related` is
+vector similarity (no key); `summarize`/`explain`/`compare` need `GROQ_API_KEY`.
+
 ## Known gaps / roadmap (next steps, not yet done)
 
 - ⚠ **Thresholds still need calibrating on YOUR corpus.** The harness is ready
@@ -134,11 +150,6 @@ for a trustworthy number.
   in `engine/retrieval.py` from its suggested cutoff. They're recall-leaning
   placeholders until then. Expanding the gold set to ~20–30 questions makes the
   number trustworthy.
-- **Officer features** — document comparison and supersede/amend detection
-  (FR 3.5). Groundwork is done: `engine/gr_metadata.py` already parses each GR's
-  `references` and a `supersedes` flag, so a "which GR replaced this one?"
-  feature can read those tags directly. Comparison ("diff GR-A vs GR-B") is the
-  next build on top of retrieval.
 - **Frontend portal** — the officer-facing chat UI (not ported yet).
 - **Tests** — the English base's suite was fixture-bound (arXiv gold set,
   Supabase, dim 384) and was removed rather than ported half-broken. Write a
