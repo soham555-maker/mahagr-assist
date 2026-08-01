@@ -79,14 +79,15 @@ class RetrievalConfig:
     floor_k: int = 2
     # Phase-2 reranking (used only when a Reranker is wired in):
     rerank_pool: int = 15          # fused candidates handed to the cross-encoder
-    # ⚠ PLACEHOLDER for bge-reranker-v2-m3 — its logit scale is NOT the old
-    # ms-marco model's, so the old -6.0 is meaningless here. bge-reranker-v2-m3
-    # tends to put clearly-relevant pairs above ~0 and irrelevant ones below;
-    # 0.0 is a reasonable recall-leaning start. Recalibrate with
-    # rerank_analysis.py on a GR gold set. One threshold for all modalities: the
-    # cross-encoder reads content, not templated form, so text and table chunks
-    # score on the same relevance scale.
-    rerank_threshold: float = 0.0
+    # Calibrated 2026-08-01 (scripts/eval_retrieval.py, 196-GR HTE corpus, gold
+    # set data/gold/gold.json). bge-reranker-v2-m3 outputs a 0..1 relevance
+    # score: RELEVANT top hits landed at 0.99 (p10 0.988), out-of-corpus at
+    # 0.001-0.024, in-corpus-irrelevant up to 0.75 — a wide clean gap. 0.80
+    # abstains on OOC and keeps every correct hit (hit@1 4/4, MRR 1.0),
+    # recall-leaning vs the ~0.84 midpoint. One threshold for all modalities:
+    # the cross-encoder reads content, not templated form. (Small gold set —
+    # widen it and re-run to firm this up.)
+    rerank_threshold: float = 0.80
 
 
 class KeywordIndex:
