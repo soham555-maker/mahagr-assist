@@ -60,13 +60,14 @@ from engine.vector_store import FaissStore
 @dataclass
 class RetrievalConfig:
     query_prefix: str = config.QUERY_PREFIX   # "" for bge-m3
-    # ⚠ PLACEHOLDER cutoffs for bge-m3 — not yet calibrated on a GR gold set.
-    # bge-m3 dense cosine for relevant pairs typically sits ~0.5-0.7 and for
-    # clearly-irrelevant pairs ~0.2-0.4, i.e. lower and more spread out than
-    # bge-small-en's upward-compressed scores — so the old 0.69/0.66 would
-    # over-filter here. Start low (recall) and tighten with measured data.
-    text_threshold: float = 0.50
-    table_threshold: float = 0.45
+    # Calibrated 2026-08-01 on a 196-GR Higher & Technical Education corpus with
+    # scripts/eval_retrieval.py --no-rerank (gold set: data/gold/gold.json).
+    # Measured bge-m3 cosine: out-of-corpus questions topped at 0.540, the lowest
+    # RELEVANT top hit was 0.586 — so 0.55 sits in that gap: it abstains on the
+    # OOC probes yet keeps every correct hit (hit@5 4/4). Recall-leaning. NOTE:
+    # gold set is only 6 questions — widen it and re-run to firm these up.
+    text_threshold: float = 0.55
+    table_threshold: float = 0.50   # no table chunks in the text corpus; matters for PDF GRs
     # Dense CANDIDATE generation is widened (vs. the old 8/4 final caps) so RRF
     # has room to promote a chunk that dense ranked just outside the old cap but
     # BM25 ranked high — that recall gain is the point of Phase-1 hybrid.
