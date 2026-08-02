@@ -102,7 +102,7 @@ def _generate(system, chunks, task, client, config, language):
 
 
 def summarize(retriever, doc_id, client=None, config=None, language="auto"):
-    client = client or rag.make_client()
+    client = client or rag.make_client(config)
     chunks = document_chunks(retriever.store, doc_id)
     return _generate(SUMMARIZE_SYSTEM, chunks,
                      f"Summarize Government Resolution '{doc_id}'.",
@@ -110,7 +110,7 @@ def summarize(retriever, doc_id, client=None, config=None, language="auto"):
 
 
 def explain(retriever, question, client=None, config=None, language="auto"):
-    client = client or rag.make_client()
+    client = client or rag.make_client(config)
     result = retriever.retrieve(question)
     return _generate(EXPLAIN_SYSTEM, result["chunks"],
                      f"Explain in simple language: {question}",
@@ -119,7 +119,7 @@ def explain(retriever, question, client=None, config=None, language="auto"):
 
 def compare(retriever, doc_id_a, doc_id_b, client=None, config=None, language="auto",
             per_side=6):
-    client = client or rag.make_client()
+    client = client or rag.make_client(config)
     a = document_chunks(retriever.store, doc_id_a)[:per_side]
     b = document_chunks(retriever.store, doc_id_b)[:per_side]
     if not a or not b:

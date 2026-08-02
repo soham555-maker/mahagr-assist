@@ -45,19 +45,27 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
+
+from engine import config
 
 load_dotenv()  # makes GROQ_API_KEY from .env visible to the groq client
 
 
 @dataclass
 class GenerationConfig:
-    model: str = "llama-3.3-70b-versatile"   # free-tier quality pick (text-only)
-    vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # used only when a figure/formula image is in context
-    scratch_model: str = "llama-3.1-8b-instant"  # cheap runs while iterating
+    # LLM provider seam (see engine/config.py). "groq" (default) or "ollama".
+    # default_factory reads the env at instantiation, so LLM_PROVIDER set in .env
+    # (loaded at import) is honored, not just a shell export.
+    provider: str = field(default_factory=lambda: os.environ.get("LLM_PROVIDER", config.LLM_PROVIDER).lower())
+    ollama_base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", config.OLLAMA_BASE_URL))
+    ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", config.OLLAMA_MODEL))   # one local model, all roles
+    model: str = "llama-3.3-70b-versatile"   # groq: free-tier quality pick (text-only)
+    vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # groq: figure/formula image context
+    scratch_model: str = "llama-3.1-8b-instant"  # groq: cheap query rewrites
     temperature: float = 0.2   # low = boring and faithful; 0.0 for reproducible tests
     max_tokens: int = 1024     # output cap (cost/runaway guard, not a compressor)
     context_token_budget: int = 6000  # estimated tokens allowed for context blocks
@@ -297,12 +305,73 @@ def resolve_citations(valid, used_chunks):
 # the LLM edge — the only non-deterministic, networked part
 # --------------------------------------------------------------------------- #
 
-def make_client():
-    """Fail early and helpfully if the key isn't configured."""
+class OllamaClient:
+    """Minimal LOCAL LLM client via Ollama's OpenAI-compatible endpoint
+    (POST {base}/v1/chat/completions), using only the standard library — no
+    cloud SDK, nothing leaves the machine. Exposes the same
+    `.chat.completions.create(...)` surface and OpenAI-shaped result
+    (`.choices[0].message.content`, `.choices[0].finish_reason`, `.usage.*`)
+    that the Groq client does, so call_llm/answer treat the two identically."""
+
+    def __init__(self, base_url):
+        self.base_url = base_url.rstrip("/")
+        self.chat = _Namespace(completions=_Namespace(create=self._create))
+
+    def _create(self, model, messages, temperature, max_tokens):
+        import json
+        import urllib.request
+        body = json.dumps({
+            "model": model, "messages": messages, "temperature": temperature,
+            "max_tokens": max_tokens, "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/chat/completions", data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                payload = json.loads(r.read())
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not reach Ollama at {self.base_url} ({e}). Is it running "
+                f"(`ollama serve`) and is the model pulled (`ollama pull <model>`)?"
+            ) from e
+        return self._to_response(payload)
+
+    @staticmethod
+    def _to_response(payload):
+        """OpenAI-shaped dict -> attribute object matching the Groq result.
+        Pure and testable without a live server."""
+        choice = (payload.get("choices") or [{}])[0]
+        usage = payload.get("usage") or {}
+        return _Namespace(
+            choices=[_Namespace(
+                message=_Namespace(content=(choice.get("message") or {}).get("content", "")),
+                finish_reason=choice.get("finish_reason", "stop"),
+            )],
+            usage=_Namespace(
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+            ),
+        )
+
+
+class _Namespace:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def make_client(gen_config=None):
+    """Build the LLM client for the configured provider. groq (default) needs
+    GROQ_API_KEY; ollama needs nothing (a local server) — the on-prem path."""
+    gen_config = gen_config or GenerationConfig()
+    if gen_config.provider == "ollama":
+        return OllamaClient(gen_config.ollama_base_url)
     if not os.environ.get("GROQ_API_KEY"):
         raise RuntimeError(
-            "GROQ_API_KEY is not set. Copy .env.example to .env and paste "
-            "your key (free at https://console.groq.com/keys)."
+            "GROQ_API_KEY is not set. Copy .env.example to .env and paste your "
+            "key (free at https://console.groq.com/keys) — or set LLM_PROVIDER="
+            "ollama to run a local model instead."
         )
     # pyrefly: ignore [missing-import]
     from groq import Groq
@@ -311,23 +380,27 @@ def make_client():
 
 def call_llm(messages, config, client, model=None, temperature=None, max_tokens=None):
     """
-    One chat-completions call with polite 429 handling: exponential backoff
-    (2s, 4s), a bounded number of retries, then a clean failure. A 429 is the
-    service saying "slower", not a bug — same etiquette as fetch_corpus.py's
-    arXiv delay, different protocol. Anything else (timeout, auth) propagates
-    immediately: retrying won't fix those and would just hide them.
+    One chat-completions call. On groq, polite 429 handling: exponential backoff
+    (2s, 4s), bounded retries, then clean failure — a 429 means "slower", not a
+    bug. Anything else (timeout, auth) propagates immediately. On ollama there's
+    no rate limit, so the call is made directly.
 
-    model overrides config.model — answer() passes the vision model when the
-    prompt carries images. temperature/max_tokens override config's the same
-    way — rewrite_query() wants deterministic, short output, not the answer's
-    own generation settings.
+    model overrides config.model (answer() passes the vision model for image
+    context; rewrite_query() the scratch model) — but ONLY on groq. On ollama
+    there is one local model (config.ollama_model) used for every role.
     """
-    # pyrefly: ignore [missing-import]
-    from groq import RateLimitError
-
-    model = model or config.model
     temperature = config.temperature if temperature is None else temperature
     max_tokens = config.max_tokens if max_tokens is None else max_tokens
+
+    if config.provider == "ollama":
+        return client.chat.completions.create(
+            model=config.ollama_model, messages=messages,
+            temperature=temperature, max_tokens=max_tokens,
+        )
+
+    # pyrefly: ignore [missing-import]
+    from groq import RateLimitError
+    model = model or config.model
     attempt = 0
     while True:
         try:
@@ -475,7 +548,7 @@ def answer(question, retriever, client=None, config=None, history=None,
     instead, since it needs the rewritten query for upload search too.
     """
     config = config or GenerationConfig()
-    client = client or make_client()
+    client = client or make_client(config)
 
     if retrieval_result is None:
         retrieval_query = rewrite_query(question, history, client, config)
@@ -488,9 +561,12 @@ def answer(question, retriever, client=None, config=None, history=None,
     # Switch to the vision model iff a figure/formula image actually made it
     # into the prompt (api.py resolved its URL). Text-only requests stay on the
     # cheaper text model — you only pay for vision when a visual is in context.
+    # (On ollama there's one local model; call_llm ignores this and reports it.)
     uses_images = any(h["metadata"].get("image_url") for h in used_chunks)
     model = config.vision_model if uses_images else config.model
     response = call_llm(messages, config, client, model=model)
+    if config.provider == "ollama":
+        model = config.ollama_model
 
     choice = response.choices[0]
     text = choice.message.content or ""

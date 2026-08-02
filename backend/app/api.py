@@ -91,10 +91,13 @@ class CompareReq(BaseModel):
 @app.get("/health")
 def health():
     r = _state.get("retriever")
+    gc = rag.GenerationConfig()
     return {"status": "ok" if r else "loading",
             "indexed_vectors": len(r.store) if r else 0,
             "embedding_model": config.EMBED_MODEL,
-            "reranker_model": config.RERANK_MODEL}
+            "reranker_model": config.RERANK_MODEL,
+            "llm_provider": gc.provider,
+            "llm_model": gc.ollama_model if gc.provider == "ollama" else gc.model}
 
 
 @app.get("/documents")

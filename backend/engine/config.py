@@ -46,3 +46,14 @@ RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 #   sudo pacman -S tesseract tesseract-data-mar tesseract-data-hin tesseract-data-eng
 OCR_LANGS = "mar+hin+eng"
 OCR_DPI = 300               # render DPI for a text-less page before OCR
+
+# --- LLM provider (the one remote piece; everything else runs locally) ---
+# "groq"  — Groq-hosted Llama, fast, needs GROQ_API_KEY (demo default).
+# "ollama"— a LOCAL model via Ollama's OpenAI-compatible API, so no document
+#           ever leaves the machine — the NIC / on-premise deployment story.
+# Switch with LLM_PROVIDER=ollama in the environment; nothing else changes
+# (retrieval, embeddings and reranking are already fully local).
+import os as _os
+LLM_PROVIDER = _os.environ.get("LLM_PROVIDER", "groq").lower()
+OLLAMA_BASE_URL = _os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = _os.environ.get("OLLAMA_MODEL", "llama3.1:8b")

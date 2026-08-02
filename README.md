@@ -147,7 +147,7 @@ vector similarity (no key); `summarize`/`explain`/`compare` need `GROQ_API_KEY`.
 
 ```bash
 cd backend && pip install -r requirements-dev.txt
-python -m pytest tests/ -q        # 31 tests, ~0.5s, no models needed
+python -m pytest tests/ -q        # 35 tests, ~0.5s, no models needed
 ```
 
 Model-free by design: a `conftest.py` stubs `sentence_transformers`, so the
@@ -199,9 +199,21 @@ npm run dev                             # http://localhost:3000
 - **Table/figure captions** — `_resolve_caption` matches the English words
   "Table"/"Figure"; add Marathi equivalents (तक्ता etc.) for Marathi GRs.
 
-## Deployment note
+## On-premise / NIC deployment
 
-The LLM call is isolated behind `engine/rag.py`, using Groq (fast) for the
-demo. For on-premise / NIC deployment it can be swapped to a local Llama-3 via
-Ollama so no document leaves the department — the rest of the pipeline
-(embedding, retrieval, reranking) already runs fully locally.
+Embedding, retrieval and reranking already run **fully locally** — the only
+remote piece is the LLM call, isolated behind one provider seam in
+`engine/rag.py`. Groq (hosted, fast) is the demo default; flip to a **local
+model via Ollama** and no document ever leaves the machine:
+
+```bash
+ollama serve && ollama pull llama3.1:8b        # once
+# in backend/.env:
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=llama3.1:8b
+```
+
+Nothing else changes — same API, same portal, `GET /health` reports the active
+`llm_provider`. The Ollama client (`rag.OllamaClient`) uses only the standard
+library (Ollama's OpenAI-compatible endpoint), so the offline path pulls in no
+cloud SDK.
