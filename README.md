@@ -143,6 +143,18 @@ python scripts/officer_tools.py related  <gr_id>             # recommend similar
 `supersede` is a pure metadata-graph lookup (no LLM, no key); `related` is
 vector similarity (no key); `summarize`/`explain`/`compare` need `GROQ_API_KEY`.
 
+### Tests
+
+```bash
+cd backend && pip install -r requirements-dev.txt
+python -m pytest tests/ -q        # 31 tests, ~0.5s, no models needed
+```
+
+Model-free by design: a `conftest.py` stubs `sentence_transformers`, so the
+suite runs fast and without torch. Covers the logic worth locking down —
+Devanagari tokenization, GR metadata parsing, RRF fusion, citation
+parsing/formatting, chunking, and the supersession graph.
+
 ### API server (Phase 3)
 
 A slim FastAPI (`app/api.py`) loads the index + models once and serves
@@ -181,10 +193,6 @@ npm run dev                             # http://localhost:3000
   placeholders until then. Expanding the gold set to ~20–30 questions makes the
   number trustworthy.
 - **Frontend portal** — the officer-facing chat UI (not ported yet).
-- **Tests** — the English base's suite was fixture-bound (arXiv gold set,
-  Supabase, dim 384) and was removed rather than ported half-broken. Write a
-  fresh suite against a GR gold set; the pure functions (chunking, RRF fusion,
-  citation parsing, Devanagari tokenization) are the easy first targets.
 - **Legacy corpus path** — `app/main.py` and `engine/documents.py` still carry
   the Supabase upload/Storage pipeline from the base. The baseline runs without
   them (`ingest_grs.py` + `ask.py`); trim or re-point them when building the portal.
