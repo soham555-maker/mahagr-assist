@@ -157,6 +157,21 @@ cd backend && uvicorn app.api:app --reload      # docs at http://127.0.0.1:8000/
 · `GET /related/{id}`. The no-LLM endpoints (documents, supersede, related,
 health) work without a `GROQ_API_KEY`.
 
+### Officer portal (Phase 4)
+
+A Next.js + Tailwind front end in `frontend/` (navy/teal, WCAG-minded), talking
+to the API above. Two views: **Ask** (`/`) — grounded, cited chat in English or
+Marathi with an abstention state — and **Browse GRs** (`/browse`) — search the
+indexed GRs, read one, see what it supersedes / relates to, and compare two.
+
+```bash
+# backend first:  cd backend && uvicorn app.api:app       (port 8000)
+cd frontend
+cp .env.local.example .env.local        # NEXT_PUBLIC_API_URL, default http://localhost:8000
+npm install
+npm run dev                             # http://localhost:3000
+```
+
 ## Known gaps / roadmap (next steps, not yet done)
 
 - ⚠ **Thresholds still need calibrating on YOUR corpus.** The harness is ready

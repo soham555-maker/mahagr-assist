@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #0b2545;
+  --teal: #1c7293;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #f7fafc;
+  color: #102a43;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible focus for keyboard nav (Accessible & Ethical style) */
+:focus-visible {
+  outline: 3px solid #2ca6a4;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Answer prose: readable line-height + spacing, Devanagari-friendly */
+.prose-answer {
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.prose-answer strong { font-weight: 600; }
+
+/* Respect reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* Thin scrollbar for panels */
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #c7d3e0; border-radius: 8px; }
