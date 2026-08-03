@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { GitCompareArrows, Search, ArrowRightLeft, Link2, ShieldCheck } from "lucide-react";
+import { GitCompareArrows, Search, ArrowRightLeft, Link2, ShieldCheck, FileText } from "lucide-react";
 import {
   api,
   type DocMeta,
@@ -202,9 +202,23 @@ function DocDetail({ id }: { id: string }) {
   const [sup, setSup] = useState<Supersession | null>(null);
   const [rel, setRel] = useState<Related[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [summary, setSummary] = useState<AnswerResult | null>(null);
+  const [summing, setSumming] = useState(false);
+
+  async function summarize() {
+    setSumming(true);
+    setSummary(null);
+    try {
+      setSummary(await api.summarize(id, "auto"));
+    } catch (e) {
+      setSummary({ answer: `Summarize failed: ${(e as Error).message}`, sources: [], phantom_citations: [] });
+    } finally {
+      setSumming(false);
+    }
+  }
 
   useEffect(() => {
-    setText(null); setSup(null); setRel([]); setErr(null);
+    setText(null); setSup(null); setRel([]); setErr(null); setSummary(null);
     api.documentText(id).then((d) => { setText(d.text); setMeta(d); }).catch((e) => setErr((e as Error).message));
     api.supersede(id).then(setSup).catch(() => {});
     api.related(id).then((r) => setRel(r.related)).catch(() => {});
@@ -216,12 +230,29 @@ function DocDetail({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <Panel>
-        <h2 className="font-serif text-xl font-semibold leading-snug text-ink">{meta?.title || id}</h2>
-        <p className="mt-1.5 flex flex-wrap gap-x-3 text-sm text-slate2">
-          {meta?.gr_number && <span className="font-medium text-teal">{meta.gr_number}</span>}
-          {meta?.date && <span>{meta.date}</span>}
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="font-serif text-xl font-semibold leading-snug text-ink">{meta?.title || id}</h2>
+            <p className="mt-1.5 flex flex-wrap gap-x-3 text-sm text-slate2">
+              {meta?.gr_number && <span className="font-medium text-teal">{meta.gr_number}</span>}
+              {meta?.date && <span>{meta.date}</span>}
+            </p>
+          </div>
+          <button
+            onClick={summarize}
+            disabled={summing}
+            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-sm text-slate2 transition-colors duration-200 hover:border-teal hover:text-teal disabled:opacity-40"
+          >
+            <FileText size={15} /> Summarize
+          </button>
+        </div>
       </Panel>
+
+      {summing ? (
+        <Panel><Spinner label="Summarizing this GR…" /></Panel>
+      ) : summary ? (
+        <AnswerView title="Summary" result={summary} />
+      ) : null}
 
       {sup && sup.found && (
         <Panel>

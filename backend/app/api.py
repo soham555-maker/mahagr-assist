@@ -124,7 +124,10 @@ def document_text(doc_id: str):
 
 @app.post("/ask")
 def ask(req: AskReq):
-    res = rag.answer(req.question, _retriever(), _client(), history=req.history)
+    r = _retriever()
+    res = rag.answer(req.question, r, _client(), history=req.history)
+    # conflict/supersede check over the cited GRs (deterministic, metadata-based)
+    res["warnings"] = officer.supersede_warnings(r.store, res["sources"])
     # drop the raw chunk bodies from the wire response; sources carry provenance
     res.pop("chunks", None)
     return res

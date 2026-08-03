@@ -9,6 +9,7 @@ type Msg = {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  warnings?: string[];
   abstain?: boolean;
   error?: boolean;
 };
@@ -22,6 +23,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [language, setLanguage] = useState("auto");
+  const [explainMode, setExplainMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -35,10 +37,18 @@ export default function ChatPage() {
     setLoading(true);
     setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     try {
-      const res = await api.ask(question, language, history);
+      const res = explainMode
+        ? await api.explain(question, language)
+        : await api.ask(question, language, history);
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: res.answer, sources: res.sources, abstain: isAbstention(res.answer) },
+        {
+          role: "assistant",
+          content: res.answer,
+          sources: res.sources,
+          warnings: res.warnings,
+          abstain: isAbstention(res.answer),
+        },
       ]);
     } catch (e) {
       setMessages((m) => [
@@ -90,6 +100,16 @@ export default function ChatPage() {
                           <AbstentionBanner />
                         </div>
                       )}
+                      {m.warnings && m.warnings.length > 0 && (
+                        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                          <p className="mb-1 font-semibold">⚠ Possible conflict — check before relying on this</p>
+                          <ul className="list-disc space-y-0.5 pl-5">
+                            {m.warnings.map((w, wi) => (
+                              <li key={wi}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div className="prose-answer text-[15px] text-ink">{m.content}</div>
                       {m.sources && m.sources.length > 0 && (
                         <div className="mt-4 border-t border-line pt-3">
@@ -126,7 +146,18 @@ export default function ChatPage() {
         className="sticky bottom-0 border-t border-line bg-[#f7fafc] py-3"
       >
         <div className="mb-2 flex items-center justify-between">
-          <LangToggle value={language} onChange={setLanguage} />
+          <div className="flex items-center gap-3">
+            <LangToggle value={language} onChange={setLanguage} />
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate2" title="Answer in simple, plain language">
+              <input
+                type="checkbox"
+                checked={explainMode}
+                onChange={(e) => setExplainMode(e.target.checked)}
+                className="accent-teal"
+              />
+              Explain simply
+            </label>
+          </div>
           {messages.length > 0 && (
             <button
               type="button"

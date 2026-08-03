@@ -18,6 +18,7 @@ export type AnswerResult = {
   answer: string;
   sources: Source[];
   phantom_citations: number[];
+  warnings?: string[];
   low_confidence?: boolean;
   model?: string;
 };
@@ -62,6 +63,8 @@ export const api = {
     req<AnswerResult>("/ask", { method: "POST", body: JSON.stringify({ question, language, history }) }),
   summarize: (doc_id: string, language: string) =>
     req<AnswerResult>("/summarize", { method: "POST", body: JSON.stringify({ doc_id, language }) }),
+  explain: (question: string, language: string) =>
+    req<AnswerResult>("/explain", { method: "POST", body: JSON.stringify({ question, language }) }),
   compare: (doc_a: string, doc_b: string, language: string) =>
     req<AnswerResult>("/compare", { method: "POST", body: JSON.stringify({ doc_a, doc_b, language }) }),
   documents: () => req<DocMeta[]>("/documents"),

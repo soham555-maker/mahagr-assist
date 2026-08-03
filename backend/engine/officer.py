@@ -169,6 +169,26 @@ def supersession(store, doc_id):
     }
 
 
+def supersede_warnings(store, sources):
+    """Conflict/supersede check for an answer's cited GRs (FR: "highlight
+    conflicting Government documents"). For each cited GR, look up the supersede
+    graph; if a NEWER GR in the corpus supersedes it, return a warning so the
+    officer isn't shown a cancelled order without notice. Deterministic (metadata
+    only) — it complements the LLM prompt's own conflict flagging."""
+    seen, warnings = set(), []
+    for s in sources or []:
+        gr = s.get("gr_number")
+        if not gr or gr in seen:
+            continue
+        seen.add(gr)
+        info = supersession(store, gr)
+        for sb in (info.get("superseded_by") if info.get("found") else []) or []:
+            date = sb.get("date") or "unknown date"
+            warnings.append(
+                f"GR {gr} may be superseded by GR {sb['gr_number']} ({date}) — verify before relying on it.")
+    return warnings
+
+
 def related(retriever, doc_id, k=5):
     """Recommend GRs similar to doc_id by embedding its title/opening and
     finding the nearest OTHER documents in the shared vector space."""
