@@ -63,12 +63,12 @@ class GenerationConfig:
     provider: str = field(default_factory=lambda: os.environ.get("LLM_PROVIDER", config.LLM_PROVIDER).lower())
     ollama_base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", config.OLLAMA_BASE_URL))
     ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", config.OLLAMA_MODEL))   # one local model, all roles
-    model: str = "llama-3.3-70b-versatile"   # groq: free-tier quality pick (text-only)
+    model: str = "llama-3.1-8b-instant"   # groq: high daily-token limit, fine for grounded QA
     vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # groq: figure/formula image context
     scratch_model: str = "llama-3.1-8b-instant"  # groq: cheap query rewrites
     temperature: float = 0.2   # low = boring and faithful; 0.0 for reproducible tests
-    max_tokens: int = 1024     # output cap (cost/runaway guard, not a compressor)
-    context_token_budget: int = 6000  # estimated tokens allowed for context blocks
+    max_tokens: int = 700      # output cap (cost/runaway guard, not a compressor)
+    context_token_budget: int = 2500  # keep the top few chunks only — far fewer tokens/call
     history_window: int = 6    # recency-window turns (3 exchanges) sent as real roles
     max_images: int = 3        # cap figure/formula images attached per request (tokens + rate)
     max_retries: int = 2       # extra attempts after a 429, with backoff
