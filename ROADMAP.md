@@ -38,11 +38,12 @@ Goal: every SRS officer-help feature works and is exposed in the UI.
 ## Phase 3 — Persistence & memory
 Goal: conversations and feedback survive restarts.
 
-- [ ] Add a local SQLite store: conversations, messages, feedback (thumbs + comment)
-- [ ] Wire stored history into the query-rewrite step (follow-ups resolve across sessions)
-- [ ] Add a conversation-history list in the portal
+- [x] Local SQLite store (`app/db.py`): conversations, messages (with sources + warnings), feedback
+- [x] Wire stored history into query-rewrite — `/ask` loads the conversation's turns from the DB;
+      verified a follow-up ("And what about the Open category?") resolved to 12000 across turns
+- [x] Conversation-history sidebar in the portal + feedback thumbs (up/down) per answer
 
-**Done when:** close the app, reopen, and past chats + feedback are still there.
+**Done when:** close the app, reopen, and past chats + feedback are still there. ✓ (SQLite file at data/db/)
 
 ## Phase 4 — Auth, roles & security
 Goal: behaves like a real government portal, not an open demo.

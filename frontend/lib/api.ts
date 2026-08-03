@@ -21,7 +21,12 @@ export type AnswerResult = {
   warnings?: string[];
   low_confidence?: boolean;
   model?: string;
+  conversation_id?: string;
+  message_id?: string;
 };
+
+export type ConvMeta = { id: string; title: string; created_at: number; messages: number };
+export type StoredMsg = { id: string; role: "user" | "assistant"; content: string; sources: Source[]; warnings: string[] };
 
 export type DocMeta = {
   doc: string;
@@ -59,8 +64,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => req<{ status: string; indexed_vectors: number; embedding_model: string }>("/health"),
-  ask: (question: string, language: string, history?: { role: string; content: string }[]) =>
-    req<AnswerResult>("/ask", { method: "POST", body: JSON.stringify({ question, language, history }) }),
+  ask: (question: string, language: string, conversation_id?: string | null) =>
+    req<AnswerResult>("/ask", { method: "POST", body: JSON.stringify({ question, language, conversation_id }) }),
+  conversations: () => req<ConvMeta[]>("/conversations"),
+  conversation: (id: string) => req<{ conversation_id: string; messages: StoredMsg[] }>(`/conversations/${encodeURIComponent(id)}`),
+  deleteConversation: (id: string) => req<{ deleted: string }>(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  feedback: (conversation_id: string, message_id: string, rating: "up" | "down") =>
+    req<{ feedback_id: string }>("/feedback", { method: "POST", body: JSON.stringify({ conversation_id, message_id, rating }) }),
   summarize: (doc_id: string, language: string) =>
     req<AnswerResult>("/summarize", { method: "POST", body: JSON.stringify({ doc_id, language }) }),
   explain: (question: string, language: string) =>

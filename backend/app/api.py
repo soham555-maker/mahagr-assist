@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from engine import config, officer, rag
+from app import db
 
 INDEX_DIR = os.environ.get("MAHAGR_INDEX", "index")
 _state = {}   # retriever, reranker — loaded once at startup
@@ -40,6 +41,7 @@ _state = {}   # retriever, reranker — loaded once at startup
 async def lifespan(app):
     from engine.reranker import Reranker
     from engine.retrieval import load_default_retriever
+    db.init()
     print(f"Loading index ({INDEX_DIR}) + bge-m3 + reranker ...")
     _state["retriever"] = load_default_retriever(index_dir=INDEX_DIR, reranker=Reranker())
     print(f"Ready. {len(_state['retriever'].store)} vectors indexed.")
@@ -71,7 +73,13 @@ def _client():
 class AskReq(BaseModel):
     question: str
     language: str = "auto"
-    history: list[dict] | None = None
+    conversation_id: str | None = None   # persist + load history across sessions
+
+class FeedbackReq(BaseModel):
+    conversation_id: str | None = None
+    message_id: str | None = None
+    rating: str                          # "up" | "down"
+    comment: str | None = None
 
 class DocLangReq(BaseModel):
     doc_id: str
@@ -125,12 +133,41 @@ def document_text(doc_id: str):
 @app.post("/ask")
 def ask(req: AskReq):
     r = _retriever()
-    res = rag.answer(req.question, r, _client(), history=req.history)
+    # A conversation persists across sessions; load its prior turns from the DB
+    # so rag.answer's query-rewrite resolves follow-ups even after a restart.
+    cid = req.conversation_id or db.create_conversation(req.question)
+    history = [{"role": m["role"], "content": m["content"]} for m in db.get_messages(cid)]
+    res = rag.answer(req.question, r, _client(), history=history)
     # conflict/supersede check over the cited GRs (deterministic, metadata-based)
     res["warnings"] = officer.supersede_warnings(r.store, res["sources"])
-    # drop the raw chunk bodies from the wire response; sources carry provenance
-    res.pop("chunks", None)
+    res.pop("chunks", None)   # drop raw chunk bodies; sources carry provenance
+    # persist this turn
+    db.add_message(cid, "user", req.question)
+    res["message_id"] = db.add_message(cid, "assistant", res["answer"], res["sources"], res["warnings"])
+    res["conversation_id"] = cid
     return res
+
+
+@app.get("/conversations")
+def conversations():
+    return db.list_conversations()
+
+
+@app.get("/conversations/{cid}")
+def conversation(cid: str):
+    return {"conversation_id": cid, "messages": db.get_messages(cid)}
+
+
+@app.delete("/conversations/{cid}")
+def delete_conversation(cid: str):
+    db.delete_conversation(cid)
+    return {"deleted": cid}
+
+
+@app.post("/feedback")
+def feedback(req: FeedbackReq):
+    fid = db.add_feedback(req.conversation_id, req.message_id, req.rating, req.comment)
+    return {"feedback_id": fid}
 
 
 @app.post("/summarize")

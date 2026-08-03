@@ -8,8 +8,12 @@ Model instantiation (SentenceTransformer(), CrossEncoder()) is never exercised
 by these tests, so the stub is never actually called.
 """
 
+import os
 import sys
 import types
+
+# make the `app` package importable (editable install only exposes `engine`)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 if "sentence_transformers" not in sys.modules:
     _st = types.ModuleType("sentence_transformers")

@@ -27,3 +27,6 @@ backend/data/grs_text/
 .DS_Store
 *.swp
 *Original Maha-GR*
+
+# Local SQLite persistence (conversations/feedback)
+backend/data/db/
