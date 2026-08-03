@@ -1,41 +1,30 @@
 {
-  "_comment": "Retrieval gold set for MahaGR Assist. Each question names the GR(s) that SHOULD be retrieved, matched by substring against a hit's order_id / gr_number / source_file / title. in_corpus:false questions have no correct source and MUST be abstained on (used to calibrate the refusal threshold). Seeded with real Higher_and_Technical_Education_Department GRs (fetch with the default fetch_mahgrs.py). EXPAND THIS to ~20-30 questions across your ingested corpus for trustworthy threshold calibration — mix English and Marathi, and include hard/near-miss out-of-corpus probes.",
+  "_comment": "Retrieval gold set for MahaGR Assist. Each in-corpus question names the GR that SHOULD be retrieved, matched as a substring against a hit's order_id / gr_number / source_file / title. in_corpus:false questions MUST be abstained on (used to calibrate the refusal threshold). Corpus = 196 real Higher & Technical Education GRs (orgpedia) + 2 synthetic fee-table GRs. Mix of English and Marathi, including cross-lingual pairs (same GR asked in both languages).",
   "questions": [
-    {
-      "q": "What procedure must a university follow to approve new colleges, faculties and courses under the Kavikulaguru Kalidas Sanskrit University Act?",
-      "lang": "en",
-      "expected": ["201710121514029708", "एनजीसी २०१७"],
-      "in_corpus": true
-    },
-    {
-      "q": "नवीन महाविद्यालये, विद्याशाखा व अभ्यासक्रम मंजुरीसाठी विद्यापीठाने कोणती सुधारित कार्यपद्धती वापरावी?",
-      "lang": "mr",
-      "expected": ["201710121514029708", "एनजीसी २०१७"],
-      "in_corpus": true
-    },
-    {
-      "q": "Continuation of temporary posts in the Directorate of Libraries, Mumbai and its subordinate offices.",
-      "lang": "en",
-      "expected": ["201710121531250208", "मराग्रं-२५११"],
-      "in_corpus": true
-    },
-    {
-      "q": "ग्रंथालय संचालनालयाच्या आधुनिकीकरण व ई-ग्रंथालयात रूपांतर करण्याबाबतचा निर्णय काय आहे?",
-      "lang": "mr",
-      "expected": ["201711061646497708", "मराग्रं २५१७"],
-      "in_corpus": true
-    },
-    {
-      "q": "What is the annual tuition fee for a PhD in aerospace engineering at IIT Bombay?",
-      "lang": "en",
-      "expected": [],
-      "in_corpus": false
-    },
-    {
-      "q": "महाराष्ट्रातील शेतकऱ्यांसाठी कर्जमाफी योजनेची रक्कम किती आहे?",
-      "lang": "mr",
-      "expected": [],
-      "in_corpus": false
-    }
+    { "q": "What is the procedure for approving new colleges and courses under the Kavikulaguru Kalidas Sanskrit University?", "lang": "en", "expected": ["201710121514029708", "एनजीसी २०१७"], "in_corpus": true },
+    { "q": "कविकुलगुरु कालिदास संस्कृत विद्यापीठांतर्गत नवीन महाविद्यालय मंजुरीची कार्यपद्धती काय आहे?", "lang": "mr", "expected": ["201710121514029708", "एनजीसी २०१७"], "in_corpus": true },
+    { "q": "Continuation of temporary posts in the Directorate of Libraries, Mumbai.", "lang": "en", "expected": ["201710121531250208", "मराग्रं-२५११"], "in_corpus": true },
+    { "q": "ग्रंथालय संचालनालयातील अस्थायी पदे पुढे चालू ठेवण्याबाबतचा निर्णय काय आहे?", "lang": "mr", "expected": ["201710121531250208", "मराग्रं-२५११"], "in_corpus": true },
+    { "q": "Formation of a committee to examine the ordinances and statutes.", "lang": "en", "expected": ["201710121721500608"], "in_corpus": true },
+    { "q": "अध्यादेश व परिनियमांची तपासणी करण्यासाठी समिती स्थापन करण्याचा निर्णय काय आहे?", "lang": "mr", "expected": ["201710121721500608"], "in_corpus": true },
+    { "q": "Verification of compliance reports from sponsor boards of self-financed universities.", "lang": "en", "expected": ["201710261617433808", "स्वअवि"], "in_corpus": true },
+    { "q": "स्वयं अर्थसहाय्यित विद्यापीठांच्या प्रायोजक मंडळांच्या अनुपालन अहवालाची पडताळणी करण्याबाबत?", "lang": "mr", "expected": ["201710261617433808", "स्वअवि"], "in_corpus": true },
+    { "q": "Scheme for modernization of the Directorate of Libraries and conversion into e-libraries.", "lang": "en", "expected": ["201711061646497708", "201710271627544508", "मराग्रं २५१७"], "in_corpus": true },
+    { "q": "ग्रंथालयांच्या आधुनिकीकरण व ई-ग्रंथालयात रूपांतर करण्याच्या योजनेबाबतचा निर्णय?", "lang": "mr", "expected": ["201711061646497708", "201710271627544508", "मराग्रं २५१७"], "in_corpus": true },
+    { "q": "Providing funds to the Dr. Babasaheb Ambedkar and Rajarshi Shahu biography publication committee for 2017-18.", "lang": "en", "expected": ["201711151549118808", "डिबीए"], "in_corpus": true },
+    { "q": "डॉ. बाबासाहेब आंबेडकर व राजर्षी शाहू चरित्र साधने प्रकाशन समितीस निधी उपलब्ध करून देण्याबाबत?", "lang": "mr", "expected": ["201711151549118808", "डिबीए"], "in_corpus": true },
+    { "q": "Opening a new Personal Ledger Account (PLA) for the Government Engineering College, Nagpur.", "lang": "en", "expected": ["201711181136349708", "स्वीप्रले"], "in_corpus": true },
+    { "q": "Approval for the polytechnic run by the Achalpur Nagar Parishad.", "lang": "en", "expected": ["201711181545162908", "अचलपूर"], "in_corpus": true },
+    { "q": "श्रीमती मोहिनी निलकंठ गायकवाड यांची बदली रद्द करण्याबाबतचा निर्णय काय आहे?", "lang": "mr", "expected": ["201711131631473808", "बदली-३४१७"], "in_corpus": true },
+    { "q": "Scholarship scheme for Maharashtra officers selected into the Indian Administrative Service through the UPSC.", "lang": "en", "expected": ["201711131731018208", "स्कॉलर"], "in_corpus": true },
+    { "q": "राजर्षी छत्रपती शाहू महाराज शिक्षण शुल्क शिष्यवृत्ती योजनेबाबतचा निर्णय?", "lang": "mr", "expected": ["201711131318527708"], "in_corpus": true },
+
+    { "q": "What is the annual fee for OBC students for the first-year diploma in 2023-24?", "lang": "en", "expected": ["GR-2023", "संकीर्ण-२०२३"], "in_corpus": true },
+    { "q": "२०२४-२५ या वर्षासाठी खुल्या प्रवर्गाचे सुधारित वार्षिक शुल्क किती आहे?", "lang": "mr", "expected": ["GR-2024", "संकीर्ण-२०२४"], "in_corpus": true },
+    { "q": "सुधारित शुल्करचनेनुसार इतर मागासवर्ग (OBC) प्रवर्गाचे वार्षिक शुल्क किती आहे?", "lang": "mr", "expected": ["GR-2024", "संकीर्ण-२०२४"], "in_corpus": true },
+
+    { "q": "What is the annual fee for a PhD in aerospace engineering at IIT Bombay?", "lang": "en", "expected": [], "in_corpus": false },
+    { "q": "महाराष्ट्रातील शेतकऱ्यांसाठी कर्जमाफी योजनेची रक्कम किती आहे?", "lang": "mr", "expected": [], "in_corpus": false },
+    { "q": "How do I apply for a new passport in Mumbai?", "lang": "en", "expected": [], "in_corpus": false }
   ]
 }

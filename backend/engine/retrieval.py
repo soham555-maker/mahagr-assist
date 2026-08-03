@@ -60,12 +60,12 @@ from engine.vector_store import FaissStore
 @dataclass
 class RetrievalConfig:
     query_prefix: str = config.QUERY_PREFIX   # "" for bge-m3
-    # Calibrated 2026-08-01 on a 196-GR Higher & Technical Education corpus with
-    # scripts/eval_retrieval.py --no-rerank (gold set: data/gold/gold.json).
-    # Measured bge-m3 cosine: out-of-corpus questions topped at 0.540, the lowest
-    # RELEVANT top hit was 0.586 — so 0.55 sits in that gap: it abstains on the
-    # OOC probes yet keeps every correct hit (hit@5 4/4). Recall-leaning. NOTE:
-    # gold set is only 6 questions — widen it and re-run to firm these up.
+    # Calibrated 2026-08-01, re-verified 2026-08-02 on the 23-question gold set
+    # (scripts/eval_retrieval.py --no-rerank). Measured bge-m3 cosine: OOC
+    # questions topped ~0.54, lowest RELEVANT top hit ~0.563 — so 0.55 still
+    # sits in that gap (abstains on OOC, keeps correct hits). Recall-leaning.
+    # NOTE: cosine thresholds only apply on the no-reranker path; the deployed
+    # path uses the reranker + rerank_threshold below.
     text_threshold: float = 0.55
     table_threshold: float = 0.50   # no table chunks in the text corpus; matters for PDF GRs
     # Dense CANDIDATE generation is widened (vs. the old 8/4 final caps) so RRF
@@ -79,15 +79,15 @@ class RetrievalConfig:
     floor_k: int = 2
     # Phase-2 reranking (used only when a Reranker is wired in):
     rerank_pool: int = 15          # fused candidates handed to the cross-encoder
-    # Calibrated 2026-08-01 (scripts/eval_retrieval.py, 196-GR HTE corpus, gold
-    # set data/gold/gold.json). bge-reranker-v2-m3 outputs a 0..1 relevance
-    # score: RELEVANT top hits landed at 0.99 (p10 0.988), out-of-corpus at
-    # 0.001-0.024, in-corpus-irrelevant up to 0.75 — a wide clean gap. 0.80
-    # abstains on OOC and keeps every correct hit (hit@1 4/4, MRR 1.0),
-    # recall-leaning vs the ~0.84 midpoint. One threshold for all modalities:
-    # the cross-encoder reads content, not templated form. (Small gold set —
-    # widen it and re-run to firm this up.)
-    rerank_threshold: float = 0.80
+    # Recalibrated 2026-08-02 (scripts/eval_retrieval.py) on the 196-GR HTE
+    # corpus + a 23-question gold set (data/gold/gold.json, EN + Marathi).
+    # bge-reranker-v2-m3 gives a 0..1 relevance score: RELEVANT top hits p10
+    # 0.966 / median 0.996; out-of-corpus scored 0.001-0.014; in-corpus-but-
+    # -irrelevant reached ~0.85. 0.85 abstains cleanly on OOC and keeps every
+    # correct hit (hit@1 19/20, hit@5 20/20, MRR 0.975), recall-leaning vs the
+    # ~0.92 midpoint. One threshold for all modalities: the cross-encoder reads
+    # content, not templated form.
+    rerank_threshold: float = 0.85
 
 
 class KeywordIndex:

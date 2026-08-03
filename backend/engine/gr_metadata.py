@@ -40,6 +40,7 @@ _MONTHS = {
 # Document category by header keyword, highest-priority first.
 _CATEGORIES = [
     (("शासन निर्णय", "government resolution"), "government resolution (GR)"),
+    (("शासन आदेश", "government order"), "government order (GO)"),
     (("परिपत्रक", "circular"), "circular"),
     (("अधिसूचना", "notification"), "notification"),
     (("कार्यालयीन आदेश", "office order"), "office order"),
@@ -145,8 +146,8 @@ def extract(text):
     # on the MAIN number line and skips reference lines (where a comma follows
     # 'शासन निर्णय'). Real numbers contain spaces ('एनजीसी २०१७/(२२९/१७)/मशि-४'),
     # so capture to end of line, not just the first token.
-    number = _first(r"शासन निर्णय\s*(?:क्रमांक|क्र)\s*[.:：ः]*\s*([^\n]+)", text) \
-        or _first(r"(?:Government Resolution No\.?|G\.?\s*R\.?\s*No\.?)\s*[:：]?\s*([^\n]+)", text)
+    number = _first(r"(?:शासन निर्णय|शासन आदेश|आदेश|परिपत्रक|अधिसूचना)\s*(?:क्रमांक|क्र)\s*[.:：ः]*\s*([^\n]+)", text) \
+        or _first(r"(?:Government Resolution No\.?|Government Order No\.?|G\.?\s*R\.?\s*No\.?)\s*[:：]?\s*([^\n]+)", text)
     if number:
         number = re.split(r"\s{2,}|।", number)[0].strip(" .,।-")
         if number:

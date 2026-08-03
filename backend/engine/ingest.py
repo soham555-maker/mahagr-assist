@@ -111,7 +111,7 @@ class IngestionPipeline:
         """
         self.model = model or SentenceTransformer(model_name)
 
-    def extract_pages_from_pdf(self, pdf_path):
+    def extract_pages_from_pdf(self, pdf_path, force_ocr=False):
         """
         Extracts text page by page.
         Returns a list of (page_number, text) tuples, 1-indexed.
@@ -122,6 +122,11 @@ class IngestionPipeline:
         such page we fall back to OCR (Marathi + Hindi + English) so scanned
         GRs are ingested just like born-digital ones. Pages that already carry
         a text layer never pay the OCR cost.
+
+        force_ocr=True OCRs EVERY page even when a text layer exists — needed for
+        government PDFs whose embedded font has a broken ToUnicode map, so the
+        text layer extracts as garbled Devanagari ("निर्णय" -> "चनणचय"). OCR of
+        the rendered page recovers correct Marathi that the text layer cannot.
         """
         try:
             doc = fitz.open(pdf_path)
@@ -130,8 +135,8 @@ class IngestionPipeline:
 
         pages = []
         for page_num, page in enumerate(doc, start=1):
-            text = page.get_text("text")
-            if not text.strip():                 # no text layer -> scanned page
+            text = "" if force_ocr else page.get_text("text")
+            if force_ocr or not text.strip():    # forced, or no text layer (scanned)
                 text = _ocr_page(page)
             pages.append((page_num, text))
         doc.close()
