@@ -67,21 +67,34 @@ class GenerationConfig:
     vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # groq: figure/formula image context
     scratch_model: str = "llama-3.1-8b-instant"  # groq: cheap query rewrites
     temperature: float = 0.2   # low = boring and faithful; 0.0 for reproducible tests
-    max_tokens: int = 700      # output cap (cost/runaway guard, not a compressor)
-    context_token_budget: int = 2500  # keep the top few chunks only — far fewer tokens/call
-    history_window: int = 6    # recency-window turns (3 exchanges) sent as real roles
+    max_tokens: int = 512      # output cap; also counts toward Groq's per-minute token limit
+    # Groq free tier caps 6000 tokens/minute; Marathi is token-dense, so keep the
+    # whole request small: system(~400) + history + context + question + output < 6000.
+    context_token_budget: int = 2200  # ceiling for history + context blocks together
+    history_token_budget: int = 800   # hard cap on the recency window (drops oldest turns)
+    history_window: int = 4    # recency-window turns (2 exchanges) sent as real roles
     max_images: int = 3        # cap figure/formula images attached per request (tokens + rate)
     max_retries: int = 2       # extra attempts after a 429, with backoff
     retry_base_delay: float = 2.0  # seconds; doubles each retry
 
 
-TOKENS_PER_WORD = 1.33  # English heuristic; checked against usage.prompt_tokens
+TOKENS_PER_WORD = 1.33          # Latin heuristic
+TOKENS_PER_DEVANAGARI = 2.0     # Devanagari is byte-BPE'd ~2 tokens/char by Llama/Groq
+
+_DEVA_RE = re.compile(r"[ऀ-ॿ]")
+_LATIN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
 def estimate_tokens(text):
-    """Rough token count: words x 1.33. Good enough to keep prompts in a safe
-    zone until Day 8 wires in real counting."""
-    return int(len(text.split()) * TOKENS_PER_WORD)
+    """Approximate the LLM token count. Critical for Marathi: the Llama/Groq
+    tokenizer splits Devanagari into ~2 tokens PER CHARACTER (byte-level BPE),
+    so an English words×1.33 estimate under-counts Marathi ~5-10x — which is how
+    a "small" context blew past Groq's 6000-token/min cap. We count Devanagari
+    characters and Latin words separately and lean high, so trim_to_budget keeps
+    requests safely under the limit."""
+    deva = len(_DEVA_RE.findall(text))
+    latin = len(_LATIN_RE.findall(text))
+    return int(latin * TOKENS_PER_WORD + deva * TOKENS_PER_DEVANAGARI)
 
 
 # --------------------------------------------------------------------------- #
@@ -207,6 +220,10 @@ def build_prompt(question, retrieval_result, config=None, history=None):
     config = config or GenerationConfig()
 
     recent_history = (history or [])[-config.history_window:]
+    # Hard-cap the history tokens (drop oldest turns) so a long Marathi thread
+    # can't push the request past Groq's per-minute limit.
+    while recent_history and sum(estimate_tokens(m["content"]) for m in recent_history) > config.history_token_budget:
+        recent_history = recent_history[1:]
     history_tokens = sum(estimate_tokens(m["content"]) for m in recent_history)
     context_budget = max(config.context_token_budget - history_tokens, 0)
 
@@ -467,7 +484,11 @@ def rewrite_query(question, history, client, config=None):
     from groq import GroqError
 
     config = config or GenerationConfig()
-    transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in history)
+    # Only the last couple of turns are needed to resolve a pronoun/reference,
+    # and keeping the transcript short keeps this call under Groq's per-minute
+    # token cap even in a long Marathi thread.
+    recent = history[-config.history_window:]
+    transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in recent)
     messages = [
         {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
         {"role": "user", "content":
