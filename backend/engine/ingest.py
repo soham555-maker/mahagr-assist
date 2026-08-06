@@ -109,7 +109,7 @@ class IngestionPipeline:
         loaded (e.g. the FastAPI backend, which loads it once for retrieval)
         ingest uploads without a second multi-hundred-MB model load.
         """
-        self.model = model or SentenceTransformer(model_name)
+        self.model = model or SentenceTransformer(model_name, device=config.EMBED_DEVICE)
 
     def extract_pages_from_pdf(self, pdf_path, force_ocr=False):
         """

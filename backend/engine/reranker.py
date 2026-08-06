@@ -39,12 +39,12 @@ RERANK_MODEL = config.RERANK_MODEL  # bge-reranker-v2-m3 — multilingual cross-
 
 class Reranker:
     def __init__(self, model_name=RERANK_MODEL, device=None):
-        """device=None lets sentence-transformers auto-pick (GPU locally,
-        CPU on the deploy host) — same policy as the embedding model."""
+        """device=None uses config.EMBED_DEVICE (auto by default; set to 'cpu'
+        to free the GPU for a local Ollama LLM). Same policy as the embedder."""
         # pyrefly: ignore [missing-import]
         from sentence_transformers import CrossEncoder
         self.model_name = model_name
-        self.model = CrossEncoder(model_name, device=device)
+        self.model = CrossEncoder(model_name, device=device or config.EMBED_DEVICE)
 
     def rerank(self, query, hits):
         """Score every (query, hit text) pair together and return the hits

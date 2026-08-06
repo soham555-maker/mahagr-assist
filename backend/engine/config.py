@@ -41,6 +41,14 @@ EMBED_DIM = 1024
 QUERY_PREFIX = ""            # bge-m3 needs no instruction prefix (unlike bge-*-en-v1.5)
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 
+# Device for the embedder + reranker. None = auto (GPU if available, else CPU).
+# Set EMBED_DEVICE=cpu when running the LLM locally on the SAME small GPU (e.g.
+# a 6 GB laptop card): Ollama's model + bge-m3 + the reranker together exceed
+# 6 GB VRAM, so put retrieval on CPU (fast enough: ~100-300ms) and leave the
+# GPU for the local LLM.
+import os as _os2
+EMBED_DEVICE = _os2.environ.get("EMBED_DEVICE") or None
+
 # --- OCR for scanned documents ---
 # Tesseract lang string: Marathi + Hindi + English. Install the traineddata:
 #   sudo pacman -S tesseract tesseract-data-mar tesseract-data-hin tesseract-data-eng
