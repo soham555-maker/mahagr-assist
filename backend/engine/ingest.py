@@ -108,8 +108,51 @@ class IngestionPipeline:
         (model_name is then ignored) -- lets a caller that already has the model
         loaded (e.g. the FastAPI backend, which loads it once for retrieval)
         ingest uploads without a second multi-hundred-MB model load.
+
+        On CUDA the model is LOADED in fp16 (config.EMBED_FP16) -- measured 3.7x
+        faster at 43% of the VRAM, with fp32-vs-fp16 cosine agreement of 0.9998
+        (see config.EMBED_FP16). It must be LOADED that way, not converted with
+        .half() afterwards: converting leaves the discarded fp32 weights in
+        torch's caching allocator, which is the same trap documented for the
+        reranker in HANDOFF §5.7. On CPU it is skipped -- fp16 there is slower.
         """
-        self.model = model or SentenceTransformer(model_name, device=config.EMBED_DEVICE)
+        if model is not None:
+            self.model = model
+        else:
+            kwargs = {}
+            if config.EMBED_FP16 and self._cuda_target():
+                kwargs["model_kwargs"] = {"torch_dtype": "float16"}
+            self.model = SentenceTransformer(model_name, device=config.EMBED_DEVICE,
+                                             **kwargs)
+
+        # Bound the sequence length (config.EMBED_MAX_SEQ). Applied to a
+        # caller-supplied model too: the cap is a property of what is SAFE to
+        # embed on this hardware, not of who created the object, and the API
+        # process shares its model with any ingest it performs.
+        #
+        # Attention cost is quadratic in sequence length and a batch pads to its
+        # longest member, so leaving bge-m3's 8192-token default in place makes
+        # peak VRAM a function of the single worst chunk in the corpus. That is
+        # not a tuning question, it is a crash: see config.EMBED_MAX_SEQ.
+        if config.EMBED_MAX_SEQ and hasattr(self.model, "max_seq_length"):
+            self.model.max_seq_length = min(self.model.max_seq_length or
+                                            config.EMBED_MAX_SEQ,
+                                            config.EMBED_MAX_SEQ)
+
+    @staticmethod
+    def _cuda_target():
+        """Will this model actually land on a GPU? EMBED_DEVICE=None means
+        'auto', so the answer depends on whether CUDA is available at all."""
+        device = (config.EMBED_DEVICE or "").lower()
+        if device.startswith("cpu"):
+            return False
+        if device.startswith("cuda"):
+            return True
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except Exception:
+            return False
 
     def extract_pages_from_pdf(self, pdf_path, force_ocr=False):
         """
@@ -376,6 +419,34 @@ class IngestionPipeline:
             i += 2
         return pages or [(1, text)]
 
+    def chunk_text(self, text, chunk_size=250, overlap=50):
+        """Split pre-extracted text into chunks WITHOUT embedding them.
+
+        Returns [{'text', 'page_start', 'page_end', 'content_type'}, ...] — the
+        same chunk dicts process_text embeds, just stopping one step earlier.
+        Split out so bulk ingestion (scripts/ingest_corpus.py) can chunk
+        thousands of documents first and then embed them in a few large GPU
+        batches. Calling process_text per document instead would issue ~18,000
+        separate encode() calls, each too small to fill the GPU — the model load
+        and kernel-launch overhead would dominate and waste most of the card.
+
+        Requires no model, so it is testable without torch.
+        """
+        pages = self._split_pages(text)
+        if not any(t.strip() for _, t in pages):
+            return []
+            
+        from engine import text_table_detect
+        prose_pages, table_chunks = text_table_detect.split_prose_and_tables(
+            pages, chunk_size=chunk_size)
+            
+        chunks = self.chunk_pages(prose_pages, chunk_size=chunk_size, overlap=overlap)
+        for c in chunks:
+            c["content_type"] = "text"
+            
+        chunks.extend(table_chunks)
+        return chunks
+
     def process_text(self, text, source_file, chunk_size=250, overlap=50,
                      source_type="gr", extra_metadata=None):
         """Ingest PRE-EXTRACTED text (e.g. an orgpedia .mr.txt GR that was
@@ -383,12 +454,9 @@ class IngestionPipeline:
         contract as process_pdf, but no PDF/OCR/pdfplumber step. Pages come from
         the '# Page N' markers; there is no separate table modality (OCR text
         has no ruled lines), so every chunk is content_type 'text'."""
-        pages = self._split_pages(text)
-        if not any(t.strip() for _, t in pages):
+        chunks = self.chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        if not chunks:
             return []
-        chunks = self.chunk_pages(pages, chunk_size=chunk_size, overlap=overlap)
-        for c in chunks:
-            c["content_type"] = "text"
         return self._embed_chunks(chunks, source_file, source_type, extra_metadata)
 
     def _embed_chunks(self, chunks, pdf_path, source_type, extra_metadata):

@@ -51,9 +51,14 @@ safety nets). Build a small Marathi/English GR gold set and re-run
 eval_retrieval.py `scores` to set these honestly before trusting the numbers.
 """
 
+import os
 from dataclasses import dataclass
 
 from engine import config, hybrid
+# Alias: several functions below take a RetrievalConfig parameter named
+# `config`, which shadows the module. The alias keeps the module reachable
+# inside them without renaming a public parameter every caller passes.
+from engine import config as engine_config
 from engine.vector_store import FaissStore
 
 
@@ -77,8 +82,14 @@ class RetrievalConfig:
     rrf_k: int = 60                # RRF constant (see hybrid.rrf_fuse)
     max_final_k: int = 12          # total chunks kept after fusion+threshold (was 8+4)
     floor_k: int = 2
-    # Phase-2 reranking (used only when a Reranker is wired in):
-    rerank_pool: int = 15          # fused candidates handed to the cross-encoder
+    # Phase-2 reranking (used only when a Reranker is wired in).
+    # 15 -> 40 after measuring on the 18,078-GR corpus (2026-08-06): the deeper
+    # pool is the ONLY knob in this dataclass that moved retrieval quality —
+    # hit@1 12->13/20, hit@5 14->15/20, MRR 0.642->0.688 — for ~+0.5 s. Widening
+    # the ANN/BM25 candidate lists instead changed nothing, which says the right
+    # chunk was already in the pool and the cross-encoder simply never got to
+    # read it. Peak VRAM is bounded by config.RERANK_BATCH, not by this number.
+    rerank_pool: int = 40          # fused candidates handed to the cross-encoder
     # Recalibrated 2026-08-02 (scripts/eval_retrieval.py) on the 196-GR HTE
     # corpus + a 23-question gold set (data/gold/gold.json, EN + Marathi).
     # bge-reranker-v2-m3 gives a 0..1 relevance score: RELEVANT top hits p10
@@ -88,6 +99,19 @@ class RetrievalConfig:
     # ~0.92 midpoint. One threshold for all modalities: the cross-encoder reads
     # content, not templated form.
     rerank_threshold: float = 0.85
+    # --- scale-path only (CorpusRetriever, PLAN Phase 2) ---
+    # At 713 vectors nearly every hit came from a different GR. At 65k, one long
+    # GR can easily own the entire top-15 with near-duplicate chunks (the 50-word
+    # overlap makes neighbouring chunks genuinely similar), which starves the
+    # cross-encoder of alternatives and makes the answer cite one document when
+    # three were relevant. Capping chunks per GR before reranking buys DIVERSITY
+    # in the pool; 2 keeps a long GR's best passage plus a backup.
+    max_chunks_per_gr: int = 2
+    # ANN is stage one of two, so it is asked for a wide pool, not a final answer:
+    # the cross-encoder does the precision work afterwards. Wider costs ~nothing
+    # on HNSW (0.035 ms/query measured) and protects recall through the grouping
+    # step above.
+    candidate_k_ann: int = 60
 
 
 class KeywordIndex:
@@ -224,7 +248,167 @@ class Retriever:
         return {"chunks": fused_hits[:cfg.floor_k], "low_confidence": True}
 
 
-def load_default_retriever(index_dir="index", config=None, reranker=None):
+class CorpusRetriever:
+    """Two-stage retrieval over the scaled corpus (PLAN Phase 2).
+
+    Same public contract as Retriever — retrieve() returns
+    {'chunks': [...], 'low_confidence': bool} with chunks shaped
+    {'score', 'text', 'metadata', 'index'} — so rag.py, officer.py and api.py
+    did not change when the corpus grew 90x. Only the plumbing underneath is
+    different:
+
+        Retriever        FaissStore (O(n), text in RAM) + rank_bm25 (RAM)
+        CorpusRetriever  HnswStore  (O(log n), no text) + SQLite FTS5 (disk)
+
+    THE PIPELINE, AND WHY EACH STAGE EXISTS
+    ---------------------------------------
+      1. EMBED the query once (bge-m3, no prefix, normalized).
+      2. ANN over the HNSW graph -> a wide, cheap, approximate candidate pool.
+         Optimises RECALL: get the right chunk *somewhere* in the pool.
+      3. BM25 over FTS5 -> the same pool from the other direction. Dense
+         embeddings blur exact tokens; a GR number, an acronym or a rupee figure
+         is precisely what a keyword index is good at. The two fail differently,
+         which is the point.
+      4. RRF-fuse the two rankings into one order (rank-based, so the two
+         incomparable score scales never have to be normalised against each
+         other).
+      5. HYDRATE the fused pool's text from SQLite in ONE query. Nothing before
+         this point has touched chunk text — that is what keeps memory flat.
+      6. GROUP BY GR and cap chunks per GR, so the rerank pool covers several
+         documents instead of one long one (see max_chunks_per_gr).
+      7. RERANK with the cross-encoder -> precision. This is the stage that
+         actually decides the answer, and the only one that reads the query and
+         the chunk together.
+      8. GATE on the calibrated rerank threshold; if nothing clears it, return
+         the floor and flag low_confidence so the prompt is allowed to refuse.
+
+    Stages 2-4 are optimised for recall and are cheap; stage 7 is expensive
+    (a 568M cross-encoder over ~15 pairs) and is why the pool is narrowed first.
+    That asymmetry is the entire argument for two-stage retrieval.
+    """
+
+    def __init__(self, store, model, config=None, reranker=None, db_path=None):
+        self.store = store
+        self.model = model
+        self.config = config or RetrievalConfig()
+        self.reranker = reranker
+        self.db_path = db_path
+
+    def embed_query(self, question):
+        """Identical contract to Retriever.embed_query — same model, same empty
+        prefix, same normalization. Kept as its own method rather than shared by
+        inheritance because the two retrievers have nothing else in common."""
+        return self.model.encode(
+            [self.config.query_prefix + question],
+            normalize_embeddings=True,
+        )[0]
+
+    def _connect(self):
+        """A fresh SQLite connection per call, on purpose.
+
+        FastAPI runs sync endpoints on a threadpool, and a sqlite3 connection
+        may not be shared across threads (it raises ProgrammingError). Opening
+        one costs tens of microseconds against a query that takes seconds, so
+        per-call connections are the simple correct answer here — no pool, no
+        thread-local, nothing to leak.
+        """
+        from engine import corpus_db
+        return corpus_db.connect(self.db_path, readonly=True)
+
+    def retrieve(self, question, filters=None):
+        """filters: optional {'departments': [...], 'date_from': 'YYYY-MM-DD',
+        'date_to': ..., 'language': 'mr'|'en'} — resolved to a set of allowed
+        faiss_ids in SQLite and pushed INTO both searches, so filtering never
+        silently eats the results (a post-filter would)."""
+        from engine import corpus_db
+
+        cfg = self.config
+        query_vec = self.embed_query(question)
+
+        with self._connect() as conn:
+            allowed = None
+            if filters:
+                allowed = corpus_db.filter_faiss_ids(
+                    conn,
+                    departments=filters.get("departments"),
+                    date_from=filters.get("date_from"),
+                    date_to=filters.get("date_to"),
+                    language=filters.get("language"))
+                if allowed is not None and not allowed:
+                    return {"chunks": [], "low_confidence": True}
+
+            # 2. dense ANN
+            dense = self.store.search(query_vec, k=cfg.candidate_k_ann,
+                                      allowed_ids=allowed)
+            dense_by_id = {h["index"]: h["score"] for h in dense}
+            dense_order = [h["index"] for h in dense]
+
+            # 3. sparse BM25 (over-fetched when filtering, since FTS5 knows
+            # nothing about departments and its hits are pruned afterwards).
+            sparse = corpus_db.search_bm25(
+                conn, question,
+                cfg.candidate_k_sparse * (4 if allowed else 1))
+            sparse_order = [i for i, _ in sparse
+                            if allowed is None or i in allowed][:cfg.candidate_k_sparse]
+
+            # 4. fuse
+            fused_order, _ = hybrid.rrf_fuse([dense_order, sparse_order], k=cfg.rrf_k)
+            if not fused_order:
+                return {"chunks": [], "low_confidence": True}
+
+            # 5. hydrate text+metadata for the pool in one query
+            pool = fused_order[:max(cfg.rerank_pool * 3, cfg.max_final_k)]
+            rows = corpus_db.chunks_by_faiss_ids(conn, pool)
+
+        # 6. group by GR, capped, preserving fused order
+        per_gr, hits = {}, []
+        for idx in pool:
+            row = rows.get(idx)
+            if row is None:
+                continue                      # index/DB drift; skip rather than crash
+            gr_id = row["metadata"]["order_id"]
+            if per_gr.get(gr_id, 0) >= cfg.max_chunks_per_gr:
+                continue
+            per_gr[gr_id] = per_gr.get(gr_id, 0) + 1
+            # BM25-only chunks have no cosine yet; reconstruct gives the exact
+            # one, so every hit's score is on the same scale. (Explicit `is
+            # None` rather than `or`: a genuine cosine of 0.0 is falsy and would
+            # be recomputed for nothing.)
+            score = dense_by_id.get(idx)
+            if score is None:
+                score = self.store.score_for_index(idx, query_vec)
+            hits.append({
+                "score": score,
+                "text": row["text"],
+                "metadata": row["metadata"],
+                "index": idx,
+            })
+
+        if not hits:
+            return {"chunks": [], "low_confidence": True}
+
+        # 7 + 8. rerank and gate — identical logic and identical calibrated
+        # threshold to Retriever, because it is the same cross-encoder on the
+        # same score scale.
+        if self.reranker is not None:
+            ranked = self.reranker.rerank(question, hits[:cfg.rerank_pool])
+            kept = [h for h in ranked
+                    if h["score"] >= cfg.rerank_threshold][:cfg.max_final_k]
+            if kept:
+                return {"chunks": kept, "low_confidence": False}
+            return {"chunks": ranked[:cfg.floor_k], "low_confidence": True}
+
+        kept = [h for h in hits if h["score"] >= self._threshold(h)][:cfg.max_final_k]
+        if kept:
+            return {"chunks": kept, "low_confidence": False}
+        return {"chunks": hits[:cfg.floor_k], "low_confidence": True}
+
+    def _threshold(self, hit):
+        ct = hit["metadata"].get("content_type")
+        return self.config.table_threshold if ct == "table" else self.config.text_threshold
+
+
+def load_default_retriever(index_dir=None, config=None, reranker=None):
     """
     Convenience for scripts/CLI: load the corpus index and the SAME embedding
     model ingestion uses (via IngestionPipeline, the single owner of the model
@@ -234,10 +418,25 @@ def load_default_retriever(index_dir="index", config=None, reranker=None):
     reranker: pass a reranker.Reranker to get the Phase-2 rerank path (api.py
     does); None keeps Phase-1 hybrid — the CLI and deterministic tests stay
     reranker-free so they don't need the cross-encoder downloaded.
+
+    WHICH BACKEND: config.VECTOR_BACKEND picks between the exact 713-vector
+    demo index ('flat') and the multi-department HNSW+SQLite corpus ('hnsw').
+    Both return an object with the same retrieve() contract, so every caller —
+    api.py, the officer tools, the eval scripts — is backend-agnostic.
     """
     from engine.ingest import IngestionPipeline
-    store = FaissStore.load(index_dir)
+
+    index_dir = index_dir or engine_config.INDEX_DIR
     pipeline = IngestionPipeline()
+
+    if engine_config.VECTOR_BACKEND == "hnsw":
+        from engine.vector_store import HnswStore
+        store = HnswStore.load(index_dir)
+        db_path = os.path.join(index_dir, "corpus.db")
+        return CorpusRetriever(store, pipeline.model, config,
+                               reranker=reranker, db_path=db_path)
+
+    store = FaissStore.load(index_dir)
     return Retriever(store, pipeline.model, config, reranker=reranker)
 
 

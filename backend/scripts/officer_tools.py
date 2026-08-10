@@ -12,8 +12,9 @@ LLM features (summarize/explain/compare) need GROQ_API_KEY; supersede/related do
 """
 
 import argparse
+import os
 
-from engine import officer
+from engine import config, officer
 
 
 def _print_answer(res):
@@ -39,13 +40,23 @@ def main():
     for name in ("summarize", "explain", "compare"):
         sub.choices[name].add_argument("--lang", default="auto")
     sub.choices["related"].add_argument("--k", type=int, default=5)
-    ap.add_argument("--index", default="index")
+    ap.add_argument("--index", default=None,
+                    help="index directory (default: config.INDEX_DIR)")
     args = ap.parse_args()
+    args.index = args.index or config.INDEX_DIR
 
     # supersede is pure metadata: load only the store (no model, no GROQ key).
     if args.cmd == "supersede":
-        from engine.vector_store import FaissStore
-        store = FaissStore.load(args.index)
+        if config.VECTOR_BACKEND == "hnsw":
+            # On the corpus backend the metadata lives in SQLite, so this needs
+            # no FAISS index loaded at all — officer.supersession only ever
+            # reads store.corpus_db_path on this path.
+            from engine.vector_store import HnswStore
+            store = HnswStore.__new__(HnswStore)
+            store.corpus_db_path = os.path.join(args.index, "corpus.db")
+        else:
+            from engine.vector_store import FaissStore
+            store = FaissStore.load(args.index)
         info = officer.supersession(store, args.doc_id)
         if not info["found"]:
             print(f"No GR matching '{args.doc_id}' in the index."); return

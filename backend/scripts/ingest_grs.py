@@ -34,7 +34,14 @@ def main(pdf_dir="data/grs", index_dir="index"):
 
     print(f"Loading embedding model {config.EMBED_MODEL} (downloads on first run)...")
     pipeline = IngestionPipeline()               # bge-m3
-    store = FaissStore()                         # dim = config.EMBED_DIM (1024)
+    
+    from engine.vector_store import HnswStore
+    store = HnswStore.load_or_new(index_dir)
+            
+    import sqlite3
+    from engine import corpus_db
+    conn = sqlite3.connect(os.path.join(index_dir, "corpus.db"))
+    corpus_db.init(os.path.join(index_dir, "corpus.db"))
 
     processed, skipped, failed = 0, 0, []
     for i, name in enumerate(pdfs, start=1):
@@ -64,7 +71,27 @@ def main(pdf_dir="data/grs", index_dir="index"):
             skipped += 1
             continue
 
-        store.add(chunks)
+        order_id = meta.get("gr_number", "") or os.path.splitext(name)[0]
+        meta["date"] = meta.get("date") or "2000-01-01"
+        corpus_db.upsert_document(conn, order_id, meta, full_text, len(chunks))
+        
+        embeddings = pipeline.model.encode([c["text"] for c in chunks], normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False)
+        start = store.add_vectors(embeddings)
+        
+        pending_chunks = [
+            (
+                start + idx,
+                order_id,
+                idx,
+                c["metadata"].get("page_start", 0),
+                c["metadata"].get("page_end", 0),
+                c["metadata"].get("content_type", "text"),
+                c["text"]
+            ) for idx, c in enumerate(chunks)
+        ]
+        corpus_db.insert_chunks(conn, pending_chunks)
+        conn.commit()
+        
         n_tab = sum(1 for c in chunks if c["metadata"]["content_type"] == "table")
         print(f"[{i}/{len(pdfs)}] ok      {name}  (+{len(chunks)} chunks, "
               f"{n_tab} table, {time.time() - t0:.1f}s, index now {len(store)})")

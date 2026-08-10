@@ -32,10 +32,23 @@ question answering. See `git log` for what was built during the event.
 ## Architecture
 
 ```
-INGEST (offline)   Documents → OCR (Marathi+English) → chunk (+tables) → embed (bge-m3)
-KNOWLEDGE STORE    FAISS vector index + metadata
-QUERY (online)     query (EN/Marathi) → hybrid search (BM25+dense) → rerank → grounded answer (cited)
+INGEST (offline)   Documents → OCR (Marathi+English) → chunk (+tables) → embed (bge-m3, GPU)
+KNOWLEDGE STORE    FAISS IndexHNSWFlat (vectors)  +  SQLite (document text, metadata, BM25/FTS5)
+                   joined by one integer: gr_chunks.faiss_id == the vector's position
+QUERY (online)     query (EN/Marathi)
+                     → ANN over HNSW  ┐
+                     → BM25 over FTS5 ┘ fused by RRF
+                     → hydrate text from SQLite → group by GR → cross-encoder rerank
+                     → grounded, cited answer (or an abstention)
 ```
+
+**Scale.** The knowledge store holds **99,410 Government Resolutions across all 33
+departments** (Higher & Technical Education, School Education & Sports, Medical
+Education, Skill Development, Social Justice, Tribal Development). Search is
+approximate-nearest-neighbour (~O(log n)) rather than a brute-force scan, and no
+chunk text is held in RAM — FAISS returns integer positions and SQLite turns
+them into text, so memory stays flat as the corpus grows. Everything runs on one
+machine; nothing is sent anywhere.
 
 ## What changed from the English base (the multilingual swap)
 
@@ -108,15 +121,35 @@ The `orgpedia/mahGRs` dataset already has every GR OCR'd into Marathi + English
 text (no PDF/OCR needed for the corpus — our OCR path is for scanned-PDF demos).
 
 ```bash
-# 1. Fetch a real corpus (default: 150 Higher & Technical Education GRs)
-python scripts/fetch_mahgrs.py --count 200          # --dept, --recent, --translations
+# 1. Fetch a small single-department corpus
+python scripts/fetch_mahgrs.py --dept Higher_and_Technical_Education_Department \
+       --count 200 --out data/grs_text
 
-# 2. Build the index from the text corpus (bge-m3 embeddings)
+# 2. Build the flat index from the text corpus (bge-m3 embeddings)
 python scripts/ingest_text.py data/grs_text index
 
 # 3. Measure retrieval quality + calibrate thresholds against the gold set
 python scripts/eval_retrieval.py                    # reports hit@k + a suggested cutoff
 ```
+
+### The full multi-department corpus (the scale path)
+
+```bash
+python scripts/fetch_mahgrs.py --list               # every department + its GR count
+python scripts/fetch_mahgrs.py --cluster education  # 18,078 GRs, resumable, threaded
+python scripts/fetch_mahgrs.py --cluster cited      # + the 6 most-cited depts -> 41,474
+python scripts/fetch_mahgrs.py --all                # all 33 departments -> 99,421
+
+# Bulk embedding wants the WHOLE GPU, so stop anything else holding it first.
+# .env pins EMBED_DEVICE=cpu for serving; a real env var overrides it.
+pkill -f "[u]vicorn app.api"; pkill -x ollama
+EMBED_DEVICE=cuda python scripts/ingest_corpus.py --batch-size 8
+```
+
+`ingest_corpus.py` is **resumable and idempotent** — re-running it skips
+everything already ingested, and after an interruption it reconciles SQLite
+against the last saved FAISS index before continuing. Serve it with
+`VECTOR_BACKEND=hnsw` and `MAHAGR_INDEX_DIR` pointing at the index directory.
 
 `eval_retrieval.py` retrieves with thresholds OFF to observe raw scores, prints
 hit@1 / hit@5 / MRR, and shows the score gap between what should be KEPT vs

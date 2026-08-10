@@ -7,6 +7,46 @@
   --teal: #1c7293;
 }
 
+/* shadcn/ui theme tokens.
+   These are HSL TRIPLETS with no wrapper, because tailwind.config.ts consumes
+   them as hsl(var(--x)). shadcn's own init wrote oklch() values here, which
+   makes every rule read hsl(oklch(...)) — invalid, and it fails silently by
+   dropping the colour rather than erroring.
+
+   The values are the existing navy/teal government palette, not shadcn's default
+   zinc, so a <Button> or <Card> comes out already on-brand and the portal pages
+   built before shadcn still match the ones built after. */
+@layer base {
+  :root {
+    --background: 204 45% 98%;          /* #F7FAFC — page */
+    --foreground: 209 61% 16%;          /* #102A43 — ink  */
+    --card: 0 0% 100%;
+    --card-foreground: 209 61% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 209 61% 16%;
+    --primary: 213 73% 16%;             /* #0B2545 — navy */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 42% 95%;           /* #EEF3F8 — ice  */
+    --secondary-foreground: 213 73% 16%;
+    --muted: 210 42% 95%;
+    --muted-foreground: 210 22% 49%;    /* #627D98 — slate2 */
+    --accent: 210 42% 95%;              /* #EEF3F8 — ice */
+    --accent-foreground: 213 73% 16%;   /* #0B2545 — navy */
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 34% 87%;              /* #D4DEEA — line */
+    --input: 213 34% 87%;
+    --ring: 179 58% 41%;                /* #2CA6A4 — teal-bright, matches :focus-visible */
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }

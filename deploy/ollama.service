@@ -1,0 +1,43 @@
+; systemd USER unit for the local LLM server (PLAN Phase 1).
+;
+; Install (no sudo — a user unit, not a system one):
+;   mkdir -p ~/.config/systemd/user
+;   cp deploy/ollama.service ~/.config/systemd/user/ollama.service
+;   systemctl --user daemon-reload
+;   systemctl --user enable --now ollama
+;   systemctl --user status ollama
+;
+; The packaged SYSTEM service (`/etc/systemd/system/ollama.service`) must stay
+; off, because it runs as the `ollama` user with the default model path on root:
+;   sudo systemctl disable --now ollama
+;
+; This unit starts on login. To have it start at boot without logging in:
+;   sudo loginctl enable-linger soham
+
+[Unit]
+Description=Ollama local LLM server (MahaGR Assist, on-prem inference)
+; Models live on the Windows NTFS partition: root has ~3 GB free and one model is
+; ~2 GB. Do not start before that partition is mounted, or Ollama quietly creates
+; an empty model dir on root and every request fails with "model not found".
+RequiresMountsFor=/mnt/win
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/ollama serve
+; MUST be set on the SERVER. `ollama pull` is only a client — the daemon decides
+; where blobs are written, so setting this on the pull command does nothing.
+Environment="OLLAMA_MODELS=/mnt/win/mahagr/ollama"
+; Keep the model resident between questions during a demo (default is 5 minutes).
+Environment="OLLAMA_KEEP_ALIVE=30m"
+; Context window. Ollama's default is 4096 and it TRUNCATES a longer prompt
+; SILENTLY — it drops the oldest tokens, which is the system prompt holding every
+; grounding and citation rule, and the answer still looks plausible. A Marathi GR
+; chunk is ~2000 tokens, so 4096 could not hold the retrieved context plus the
+; rules. MUST stay in step with engine/config.py's OLLAMA_NUM_CTX.
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

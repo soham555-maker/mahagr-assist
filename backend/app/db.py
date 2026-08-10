@@ -22,8 +22,16 @@ from contextlib import contextmanager
 DB_PATH = os.environ.get("MAHAGR_DB", os.path.join("data", "db", "mahagr.db"))
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT,
+    role TEXT, created_at REAL, active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY, user_id TEXT, action TEXT, detail TEXT,
+    ip TEXT, ts REAL
+);
 CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY, title TEXT, created_at REAL
+    id TEXT PRIMARY KEY, user_id TEXT, title TEXT, created_at REAL
 );
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, conversation_id TEXT, role TEXT, content TEXT,
@@ -56,21 +64,54 @@ def _id():
 def init():
     with _db() as c:
         c.executescript(_SCHEMA)
+        try:
+            c.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column might already exist
 
 
-def create_conversation(title):
+def get_user_by_username(username):
+    with _db() as c:
+        row = c.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_user(username, password_hash, role):
+    uid = _id()
+    with _db() as c:
+        c.execute("INSERT INTO users (id, username, password_hash, role, created_at, active) VALUES (?,?,?,?,?,1)",
+                  (uid, username, password_hash, role, time.time()))
+    return uid
+
+
+def log_audit(user_id, action, detail, ip):
+    aid = _id()
+    with _db() as c:
+        c.execute("INSERT INTO audit_log VALUES (?,?,?,?,?,?)",
+                  (aid, user_id, action, json.dumps(detail, ensure_ascii=False) if detail else None, ip, time.time()))
+    return aid
+
+
+def create_conversation(title, user_id=None):
     cid = _id()
     with _db() as c:
-        c.execute("INSERT INTO conversations VALUES (?,?,?)", (cid, (title or "New conversation")[:80], time.time()))
+        c.execute("INSERT INTO conversations (id, user_id, title, created_at) VALUES (?,?,?,?)", (cid, user_id, (title or "New conversation")[:80], time.time()))
     return cid
 
 
-def list_conversations():
+def list_conversations(user_id=None, all_users=False):
     with _db() as c:
-        rows = c.execute(
-            """SELECT c.id, c.title, c.created_at, COUNT(m.id) AS messages
-               FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id
-               GROUP BY c.id ORDER BY c.created_at DESC""").fetchall()
+        if all_users:
+            rows = c.execute(
+                """SELECT c.id, c.title, c.created_at, COUNT(m.id) AS messages, c.user_id
+                   FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id
+                   GROUP BY c.id ORDER BY c.created_at DESC""").fetchall()
+        else:
+            rows = c.execute(
+                """SELECT c.id, c.title, c.created_at, COUNT(m.id) AS messages, c.user_id
+                   FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id
+                   WHERE c.user_id=? OR c.user_id IS NULL
+                   GROUP BY c.id ORDER BY c.created_at DESC""", (user_id,)).fetchall()
     return [dict(r) for r in rows]
 
 

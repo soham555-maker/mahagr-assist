@@ -40,6 +40,15 @@ def test_call_llm_ollama_uses_local_model_not_groq_name():
     assert captured["model"] == "llama3.1:8b"  # NOT the groq name passed in
 
 
-def test_default_provider_is_groq(monkeypatch):
+def test_provider_resolves_env_then_config(monkeypatch):
+    """LLM_PROVIDER in the environment wins; otherwise the value config.py read
+    from backend/.env at import time is used. config is patched too so the test
+    asserts the resolution order rather than whatever .env this machine has —
+    on an on-prem box .env says ollama, on the demo box it says groq."""
+    monkeypatch.setattr(rag.config, "LLM_PROVIDER", "groq")
+
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     assert rag.GenerationConfig().provider == "groq"
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    assert rag.GenerationConfig().provider == "ollama"

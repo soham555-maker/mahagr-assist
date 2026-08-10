@@ -1,21 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { GitCompareArrows, Search, ArrowRightLeft, Link2, ShieldCheck, FileText } from "lucide-react";
+import { useEffect, useState } from "react";
+import { GitCompareArrows, Search, ArrowRightLeft, Link2, ShieldCheck, FileText, Download } from "lucide-react";
 import {
   api,
+  downloadDocument,
   type DocMeta,
   type Supersession,
   type Related,
   type AnswerResult,
 } from "@/lib/api";
-import { EmptyHint, LangToggle, SourceCard, Spinner } from "@/components/ui";
+import { CorpusStat, EmptyHint, LangToggle, SourceCard, Spinner, useCorpusStats } from "@/components/ui";
+import { GraphPanel } from "@/components/graph";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+const PAGE = 50;
 
 export default function BrowsePage() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [query, setQuery] = useState("");
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Opened from a citation's "open" link (?doc=<id>) so a source in an answer
+  // leads somewhere real — SRS FR 3.7.4.
   const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    const doc = new URLSearchParams(window.location.search).get("doc");
+    if (doc) setSelected(doc);
+  }, []);
+  const [depts, setDepts] = useState<string[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [atEnd, setAtEnd] = useState(false);
+  const stats = useCorpusStats();
 
   const [compareMode, setCompareMode] = useState(false);
   const [picks, setPicks] = useState<string[]>([]);
@@ -23,17 +43,43 @@ export default function BrowsePage() {
   const [compareResult, setCompareResult] = useState<AnswerResult | null>(null);
   const [comparing, setComparing] = useState(false);
 
+  // Search runs on the SERVER, not over a client-side copy of the corpus: at
+  // ~18,000 GRs, fetching every document to filter it in the browser would be a
+  // multi-megabyte page load before the officer has typed anything.
+  // Debounced so a query isn't fired on every keystroke.
   useEffect(() => {
-    api.documents().then(setDocs).catch((e) => setLoadErr((e as Error).message));
-  }, []);
+    const t = setTimeout(() => {
+      setListLoading(true);
+      api
+        .documents({ q: query.trim() || undefined, department: depts.length ? depts : undefined, limit: PAGE })
+        .then((d) => {
+          setDocs(d);
+          setLoadErr(null);
+          setAtEnd(d.length < PAGE);
+        })
+        .catch((e) => setLoadErr((e as Error).message))
+        .finally(() => setListLoading(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, depts]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return docs;
-    return docs.filter((d) =>
-      [d.title, d.gr_number, d.date, d.doc].some((f) => (f || "").toLowerCase().includes(q)),
-    );
-  }, [docs, query]);
+  async function loadMore() {
+    setListLoading(true);
+    try {
+      const more = await api.documents({
+        q: query.trim() || undefined,
+        department: depts.length ? depts : undefined,
+        limit: PAGE,
+        offset: docs.length,
+      });
+      setDocs((d) => [...d, ...more]);
+      setAtEnd(more.length < PAGE);
+    } catch (e) {
+      setLoadErr((e as Error).message);
+    } finally {
+      setListLoading(false);
+    }
+  }
 
   function rowClick(d: DocMeta) {
     if (compareMode) {
@@ -64,39 +110,98 @@ export default function BrowsePage() {
       {/* ---- left: list ---- */}
       <section className="flex min-h-0 flex-col">
         <div className="mb-3 flex items-center gap-2">
-          <div className="flex flex-1 items-center gap-2 rounded-lg border border-line bg-white px-3 focus-within:border-teal">
-            <Search size={16} className="text-slate2" aria-hidden />
-            <input
+          <div className="relative flex-1">
+            <Search
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate2"
+              aria-hidden
+            />
+            <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search GRs…"
+              placeholder="Search by title or GR number…"
               aria-label="Search Government Resolutions"
-              className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-iceblue"
+              className="bg-white pl-9"
             />
           </div>
-          <button
+          <Button
             onClick={() => {
               setCompareMode((v) => !v);
               setPicks([]);
               setCompareResult(null);
             }}
             aria-pressed={compareMode}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-2 text-sm transition-colors duration-200 ${
-              compareMode ? "border-teal bg-teal text-white" : "border-line bg-white text-slate2 hover:text-ink"
-            }`}
+            variant={compareMode ? "default" : "outline"}
+            className={cn(
+              compareMode
+                ? "bg-teal text-white hover:bg-teal/90"
+                : "border-line bg-white text-slate2 hover:text-ink",
+            )}
           >
-            <GitCompareArrows size={16} /> Compare
-          </button>
+            <GitCompareArrows size={16} className="mr-1.5" /> Compare
+          </Button>
+        </div>
+
+        {(stats?.departments.length || 0) > 1 && (
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setDepts([])}
+              aria-pressed={depts.length === 0}
+              className="cursor-pointer rounded-full focus-visible:outline-none"
+            >
+              <Badge
+                variant="outline"
+                className={cn(
+                  "font-normal transition-colors",
+                  depts.length === 0
+                    ? "border-teal bg-ice text-teal"
+                    : "border-line bg-white text-slate2 hover:text-ink",
+                )}
+              >
+                All departments
+              </Badge>
+            </button>
+            {stats!.departments.map((d) => {
+              const on = depts.includes(d.name);
+              return (
+                <button
+                  key={d.name}
+                  onClick={() => setDepts((p) => (on ? p.filter((x) => x !== d.name) : [...p, d.name]))}
+                  aria-pressed={on}
+                  title={`${d.documents.toLocaleString()} GRs`}
+                  className="cursor-pointer rounded-full focus-visible:outline-none"
+                >
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "font-normal transition-colors",
+                      on
+                        ? "border-teal bg-ice text-teal"
+                        : "border-line bg-white text-slate2 hover:text-ink",
+                    )}
+                  >
+                    {d.name.replace(/ Department$/, "")}
+                  </Badge>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mb-2">
+          <CorpusStat stats={stats} />
         </div>
 
         {loadErr && (
-          <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-            Couldn’t load documents: {loadErr}. Is the backend running on port 8000?
-          </p>
+          <Alert variant="destructive" className="mb-2">
+            <AlertDescription>
+              Couldn’t load documents: {loadErr}. Is the backend running on port 8000?
+            </AlertDescription>
+          </Alert>
         )}
 
         <ul className="scroll-thin -mx-1 flex-1 space-y-1.5 overflow-y-auto px-1" style={{ maxHeight: "calc(100dvh - 160px)" }}>
-          {filtered.map((d) => {
+          {docs.map((d) => {
             const picked = picks.includes(d.doc);
             const active = selected === d.doc && !compareMode;
             return (
@@ -132,19 +237,36 @@ export default function BrowsePage() {
               </li>
             );
           })}
-          {docs.length === 0 && !loadErr && <li className="p-3 text-sm text-slate2">Loading GRs…</li>}
+          {docs.length === 0 && !loadErr && (
+            <li className="p-3 text-sm text-slate2">
+              {listLoading ? "Loading GRs…" : "No GRs match that search."}
+            </li>
+          )}
+          {docs.length > 0 && !atEnd && (
+            <li className="pt-1">
+              <Button
+                onClick={loadMore}
+                disabled={listLoading}
+                variant="outline"
+                className="w-full border-line bg-white text-slate2 hover:border-teal hover:text-teal"
+              >
+                {listLoading ? "Loading…" : `Load ${PAGE} more`}
+              </Button>
+            </li>
+          )}
         </ul>
 
         {compareMode && (
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-white p-2">
             <LangToggle value={language} onChange={setLanguage} />
-            <button
+            <Button
               onClick={runCompare}
               disabled={picks.length !== 2 || comparing}
-              className="ml-auto flex cursor-pointer items-center gap-1.5 rounded-lg bg-navy px-3 py-2 text-sm text-white transition-colors duration-200 hover:bg-teal disabled:cursor-not-allowed disabled:opacity-40"
+              className="ml-auto bg-navy text-white hover:bg-teal disabled:opacity-40"
             >
-              <ArrowRightLeft size={15} /> Compare&nbsp;these&nbsp;two ({picks.length}/2)
-            </button>
+              <ArrowRightLeft size={15} className="mr-1.5" /> Compare&nbsp;these&nbsp;two (
+              {picks.length}/2)
+            </Button>
           </div>
         )}
       </section>
@@ -162,7 +284,7 @@ export default function BrowsePage() {
             </EmptyHint>
           )
         ) : selected ? (
-          <DocDetail id={selected} />
+          <DocDetail id={selected} onSelect={setSelected} />
         ) : (
           <EmptyHint>Select a Government Resolution to read it and see what it supersedes and relates to.</EmptyHint>
         )}
@@ -172,7 +294,11 @@ export default function BrowsePage() {
 }
 
 function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-xl border border-line bg-white p-5">{children}</div>;
+  return (
+    <Card className="border-line shadow-sm">
+      <CardContent className="p-5">{children}</CardContent>
+    </Card>
+  );
 }
 
 function AnswerView({ title, result }: { title: string; result: AnswerResult }) {
@@ -196,7 +322,7 @@ function AnswerView({ title, result }: { title: string; result: AnswerResult }) 
   );
 }
 
-function DocDetail({ id }: { id: string }) {
+function DocDetail({ id, onSelect }: { id: string; onSelect?: (id: string) => void }) {
   const [text, setText] = useState<string | null>(null);
   const [meta, setMeta] = useState<{ gr_number: string | null; date: string | null; title: string | null } | null>(null);
   const [sup, setSup] = useState<Supersession | null>(null);
@@ -224,7 +350,12 @@ function DocDetail({ id }: { id: string }) {
     api.related(id).then((r) => setRel(r.related)).catch(() => {});
   }, [id]);
 
-  if (err) return <Panel><p className="text-sm text-red-800">{err}</p></Panel>;
+  if (err)
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{err}</AlertDescription>
+      </Alert>
+    );
   if (text === null) return <Panel><Spinner label="Loading document…" /></Panel>;
 
   return (
@@ -238,13 +369,26 @@ function DocDetail({ id }: { id: string }) {
               {meta?.date && <span>{meta.date}</span>}
             </p>
           </div>
-          <button
-            onClick={summarize}
-            disabled={summing}
-            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-sm text-slate2 transition-colors duration-200 hover:border-teal hover:text-teal disabled:opacity-40"
-          >
-            <FileText size={15} /> Summarize
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              onClick={() => downloadDocument(id).catch(() => {})}
+              title="Download the full text of this GR"
+              variant="outline"
+              size="sm"
+              className="border-line bg-white text-slate2 hover:border-teal hover:text-teal"
+            >
+              <Download size={15} className="mr-1.5" /> Download
+            </Button>
+            <Button
+              onClick={summarize}
+              disabled={summing}
+              variant="outline"
+              size="sm"
+              className="border-line bg-white text-slate2 hover:border-teal hover:text-teal"
+            >
+              <FileText size={15} className="mr-1.5" /> Summarize
+            </Button>
+          </div>
         </div>
       </Panel>
 
@@ -253,6 +397,10 @@ function DocDetail({ id }: { id: string }) {
       ) : summary ? (
         <AnswerView title="Summary" result={summary} />
       ) : null}
+
+      {/* The knowledge graph (PLAN Phase 3). Renders nothing when the graph
+          has not been built, so the page degrades rather than erroring. */}
+      <GraphPanel docId={id} onSelect={onSelect} />
 
       {sup && sup.found && (
         <Panel>

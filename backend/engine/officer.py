@@ -35,9 +35,42 @@ def _hay(m):
     return " ".join(str(m.get(k, "")) for k in ("order_id", "gr_number", "source_file", "title"))
 
 
+def _corpus_db(store):
+    """The SQLite path if `store` is the scaled HNSW backend, else None.
+
+    THE ONE DISPATCH POINT. Every function below works on both backends, and
+    this is the only place that asks which one it has. The flat FaissStore keeps
+    all chunk text and metadata in Python lists, so those paths scan in memory;
+    HnswStore holds only vectors, so its paths query SQLite instead. The
+    difference is not cosmetic — at 18,000 documents the in-memory scans below
+    run per call, and supersede_warnings calls one of them once per cited GR.
+    """
+    return getattr(store, "corpus_db_path", None)
+
+
+def _graph_built(conn):
+    """Has scripts/build_graph.py been run against this corpus?
+
+    Checked because the supersede features must degrade to the older on-the-fly
+    scan rather than silently return nothing on a corpus that has been ingested
+    but whose graph has not been built yet. `LIMIT 1` so this is O(1), not a
+    count over every edge.
+    """
+    try:
+        return conn.execute("SELECT 1 FROM gr_edges LIMIT 1").fetchone() is not None
+    except Exception:      # table not created yet (an older corpus.db)
+        return False
+
+
 def document_chunks(store, doc_id):
     """All chunks of the GR identified by doc_id (matched as a substring of its
     order_id / gr_number / source_file), in reading order."""
+    db_path = _corpus_db(store)
+    if db_path:
+        from engine import corpus_db
+        with corpus_db.connect(db_path, readonly=True) as conn:
+            return corpus_db.document_chunks(conn, doc_id)
+
     hits = [{"text": t, "metadata": m, "index": i, "score": 1.0}
             for i, (t, m) in enumerate(zip(store.texts, store.metadata))
             if doc_id in _hay(m)]
@@ -45,8 +78,25 @@ def document_chunks(store, doc_id):
     return hits
 
 
-def list_documents(store):
-    """{doc_key: representative_metadata} for every distinct GR in the index."""
+def list_documents(store, limit=None, offset=0, q=None, departments=None):
+    """{doc_key: representative_metadata} for every distinct GR in the index.
+
+    limit/offset/q/departments apply to the corpus backend only and exist
+    because "every distinct GR" is 18,000 rows there — the /documents endpoint
+    has to paginate rather than serialize the whole corpus into one response.
+    """
+    db_path = _corpus_db(store)
+    if db_path:
+        from engine import corpus_db
+        with corpus_db.connect(db_path, readonly=True) as conn:
+            rows, _ = corpus_db.list_documents(
+                conn, q=q, departments=departments, limit=limit or 50, offset=offset)
+        return {r["id"]: {"order_id": r["id"], "gr_number": r["gr_number"],
+                          "date": r["date"], "department": r["department"],
+                          "language": r["language"], "category": r["category"],
+                          "title": r["title"]}
+                for r in rows}
+
     docs = {}
     for m in store.metadata:
         k = _doc_key(m)
@@ -88,9 +138,10 @@ def _generate(system, chunks, task, client, config, language):
     if not chunks:
         return {"answer": "No matching document found in the index.",
                 "sources": [], "phantom_citations": [], "chunks": []}
-    used, _ = rag.trim_to_budget(chunks, config.context_token_budget)
+    used, _ = rag.trim_to_budget(chunks, config.context_token_budget,
+                                 config.tokens_per_devanagari)
     blocks = "\n\n".join(rag.format_block(i, h) for i, h in enumerate(used, 1))
-    lang = "" if not language or language == "auto" else f"\nWrite the answer in {language}."
+    lang = rag.language_directive(language)
     user = f"{task}{lang}\n\nContext:\n{blocks}"
     messages = [{"role": "system", "content": system},
                 {"role": "user", "content": user}]
@@ -140,6 +191,57 @@ def supersession(store, doc_id):
     """Which GRs this one supersedes/cites, and which later GRs supersede it —
     read straight from the parsed metadata graph (gr_metadata's references +
     supersedes flag). No LLM: this is a fact lookup, and it must be exact."""
+    db_path = _corpus_db(store)
+    if db_path:
+        from engine import corpus_db, graph
+        with corpus_db.connect(db_path, readonly=True) as conn:
+            target = corpus_db.find_document(conn, doc_id)
+            if target is None:
+                return {"found": False, "doc_id": doc_id}
+            own = target.get("gr_number") or ""
+
+            # Prefer the PREBUILT graph (scripts/build_graph.py): its edges were
+            # matched on canonical GR numbers, so it resolves the OCR spelling
+            # variants that a raw string comparison misses, and it can give the
+            # TRANSITIVE chain. Fall back to the on-the-fly scan when the graph
+            # has not been built yet, so this endpoint never simply goes blank
+            # on a freshly ingested corpus.
+            if _graph_built(conn):
+                out = graph.outgoing(conn, target["id"])
+                chain = graph.supersede_chain(conn, target["id"])
+                return {
+                    "found": True,
+                    "doc_id": doc_id,
+                    "gr_number": own,
+                    "declares_supersession": bool(target.get("supersedes")),
+                    "cites": [{"gr_number": e["dst_number"],
+                               "in_corpus": e["dst_id"]} for e in out],
+                    # Direct supersessions, for backwards compatibility...
+                    "superseded_by": [
+                        {"doc": n["id"], "gr_number": n["gr_number"],
+                         "date": n["date"], "title": n["title"][:80]}
+                        for n in chain[:1]],
+                    # ...plus the full chain, which is what an officer actually
+                    # needs: "replaced by B" is misleading if B is also dead.
+                    "supersede_chain": [
+                        {"doc": n["id"], "gr_number": n["gr_number"],
+                         "date": n["date"], "title": n["title"][:80]}
+                        for n in chain],
+                }
+
+            cites = [e["number"]
+                     for e in corpus_db.reference_entries(target.get("refs"))]
+            present = corpus_db.documents_for_gr_numbers(conn, cites)
+            return {
+                "found": True,
+                "doc_id": doc_id,
+                "gr_number": own,
+                "declares_supersession": bool(target.get("supersedes")),
+                "cites": [{"gr_number": r, "in_corpus": present.get(r)} for r in cites],
+                "superseded_by": corpus_db.superseding_documents(conn, own),
+                "supersede_chain": [],
+            }
+
     docs = list_documents(store)
     target = next((m for k, m in docs.items() if doc_id in _hay(m)), None)
     if target is None:
@@ -182,7 +284,23 @@ def supersede_warnings(store, sources):
             continue
         seen.add(gr)
         info = supersession(store, gr)
-        for sb in (info.get("superseded_by") if info.get("found") else []) or []:
+        if not info.get("found"):
+            continue
+
+        # Prefer the transitive chain when the graph is built. Telling an
+        # officer "GR X was replaced by Y" is actively misleading when Y has
+        # itself been replaced since — the last link is the order in force.
+        chain = info.get("supersede_chain") or []
+        if len(chain) > 1:
+            last = chain[-1]
+            warnings.append(
+                f"GR {gr} may be superseded by GR {chain[0]['gr_number']} "
+                f"({chain[0].get('date') or 'unknown date'}), which was itself "
+                f"superseded — the latest appears to be GR {last['gr_number']} "
+                f"({last.get('date') or 'unknown date'}). Verify before relying on it.")
+            continue
+
+        for sb in (chain or info.get("superseded_by") or []):
             date = sb.get("date") or "unknown date"
             warnings.append(
                 f"GR {gr} may be superseded by GR {sb['gr_number']} ({date}) — verify before relying on it.")
@@ -199,8 +317,22 @@ def related(retriever, doc_id, k=5):
     probe = (m0.get("title") or "") + " " + chunks[0]["text"][:400]
     vec = retriever.model.encode([probe], normalize_embeddings=True)[0]
 
+    # HnswStore returns only ids + scores (no text lives in it), so the hits are
+    # rehydrated from SQLite before the dedupe-by-document below — which is
+    # otherwise identical for both backends.
+    db_path = _corpus_db(retriever.store)
+    if db_path:
+        from engine import corpus_db
+        raw = retriever.store.search(vec, k=k * 6)
+        with corpus_db.connect(db_path, readonly=True) as conn:
+            rows = corpus_db.chunks_by_faiss_ids(conn, [h["index"] for h in raw])
+        hits = [{"score": h["score"], **rows[h["index"]]}
+                for h in raw if h["index"] in rows]
+    else:
+        hits = retriever.store.search(vec, k=k * 6)
+
     best = {}  # doc_key -> best score
-    for hit in retriever.store.search(vec, k=k * 6):
+    for hit in hits:
         key = _doc_key(hit["metadata"])
         if key and doc_id not in _hay(hit["metadata"]):  # exclude self
             if key not in best or hit["score"] > best[key][0]:

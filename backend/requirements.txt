@@ -13,3 +13,5 @@ pymupdf4llm>=1.28.0
 rank-bm25>=0.2.2
 pytesseract>=0.3.10             # OCR for scanned Marathi/English GRs (needs system tesseract)
 pillow>=10.0.0                  # image handling for the OCR fallback
+bcrypt>=4.0.1
+PyJWT>=2.8.0

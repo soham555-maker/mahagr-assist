@@ -58,9 +58,13 @@ Goal: behaves like a real government portal, not an open demo.
 ## Phase 5 — Frontend / UX completeness & polish
 Goal: the portal is complete, clear, and Marathi-correct.
 
-- [ ] Ask: language toggle + switch language mid-conversation
-- [ ] Ask: clear abstention state; citations that open/download the source GR
-- [ ] Browse: search + filter by department / date / language; read + download
+- [x] Ask: language toggle + switch language mid-conversation (per-call `language`,
+      so it can change mid-thread; the toggle was a silent no-op until PLAN Phase 1)
+- [x] Ask: clear abstention state; citations that open/download the source GR
+      (`AbstentionBanner`; citations now carry a `doc` id -> open + download, FR 3.7.4)
+- [~] Browse: search + filter by department / date / language; read + download
+      — server-side search, department chips, read + download all done.
+      DATE and LANGUAGE filters exist on **Ask** (the Scope control), not on Browse.
 - [ ] Polished Compare, Supersede, Related, Feedback panels
 - [ ] Loading / empty / error states; responsive; verified Devanagari font rendering
 

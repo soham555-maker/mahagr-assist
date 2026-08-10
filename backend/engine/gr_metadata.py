@@ -23,6 +23,7 @@ circulars are in English), and Devanagari digits/months are normalised so a
 Marathi date like "१५ जून, २०२३" resolves to an ISO "2023-06-15".
 """
 
+import datetime
 import re
 
 # Devanagari digits -> ASCII, so "२०२३" becomes "2023" for date/number parsing.
@@ -53,10 +54,76 @@ def _norm_digits(s):
     return s.translate(_DEVA_DIGITS)
 
 
+# Punctuation that OCR renders inconsistently inside a GR number. '/' is NOT in
+# this set: it is structural (it separates the subject code, the proposal number
+# and the desk code), so dropping it would collapse genuinely different numbers.
+_NUMBER_NOISE = re.compile(r"[\s​‌‍.\-–—_,;:()\[\]]+")
+
+
+def canonical_number(number):
+    """Canonical form of a GR number, for MATCHING one document against another
+    document's reference list (PLAN Phase 3).
+
+    A GR number appears in two places that must be compared: `gr_number`, parsed
+    from the document's own header, and the entries of another GR's `references`
+    list. Both come out of OCR, so the SAME number routinely differs by
+    whitespace, by Devanagari vs ASCII digits ('२०२३' vs '2023'), and by
+    hyphens/dots the scanner did or didn't pick up. Comparing the raw strings
+    finds almost nothing; comparing canonical forms finds the real edges.
+
+    Returns None for an empty/meaningless input so callers can treat "no usable
+    number" as a distinct case rather than matching on ''.
+
+    >>> canonical_number("संकीर्ण-२०२३/प्र.क्र.४५/तांशि-४")
+    'संकीर्ण2023/प्रक45/तांशि4'
+    >>> canonical_number("संकीर्ण 2023 / प्र. क्र. ४५ / तांशि ४") == \
+        canonical_number("संकीर्ण-२०२३/प्र.क्र.४५/तांशि-४")
+    True
+    """
+    if not number:
+        return None
+    s = _norm_digits(str(number)).lower()
+    s = _NUMBER_NOISE.sub("", s)
+    s = re.sub(r"/+", "/", s).strip("/")
+    return s or None
+
+
+# A Government Resolution cannot predate the Bombay/Maharashtra record-keeping
+# this corpus draws on, and cannot be issued far in the future. Anything outside
+# this window is OCR noise, not a date. Measured on the 99,410-GR corpus: the
+# real span is 1962-02-28 .. 2027-03-31, and only 9 documents fell outside it.
+_MIN_GR_YEAR = 1900
+_MAX_GR_YEAR = 2035
+
+
+def _iso(year, month, day):
+    """'YYYY-MM-DD' if this is a real, plausible GR date — otherwise None.
+
+    TWO checks, because they catch different failures and neither alone is
+    enough (both were found in the corpus):
+
+      * CALENDAR validity. The day-month-name branch matches day as `\\d{1,2}`,
+        so OCR noise produced **'2028-09-94'** — day 94. datetime rejects it.
+      * PLAUSIBLE YEAR. '0201-01-21' is a perfectly valid date and a nonsense
+        GR; a calendar check waves it straight through.
+
+    Returning None matters as much as the check: ingest_corpus.py falls back to
+    the order id (whose first 8 digits are YYYYMMDD and are far more reliable
+    than an OCR'd header line), so a rejected parse becomes a CORRECT date
+    rather than a missing one.
+    """
+    if not _MIN_GR_YEAR <= year <= _MAX_GR_YEAR:
+        return None
+    try:
+        return datetime.date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
 def _parse_date(raw):
     """Best-effort ISO date from a GR 'दिनांक' / 'Date' value. Handles
     '१५ जून, २०२३', '15 June 2023', and numeric dd/mm/yyyy or yyyy-mm-dd.
-    Returns 'YYYY-MM-DD' or None."""
+    Returns 'YYYY-MM-DD' or None (see _iso for what is rejected and why)."""
     s = _norm_digits(raw).strip()
 
     # day  month-word  year   (Marathi or English month name)
@@ -64,17 +131,29 @@ def _parse_date(raw):
     if m:
         month = _MONTHS.get(m.group(2).lower()) or _MONTHS.get(m.group(2))
         if month:
-            return f"{int(m.group(3)):04d}-{month:02d}-{int(m.group(1)):02d}"
+            iso = _iso(int(m.group(3)), month, int(m.group(1)))
+            if iso:
+                return iso
 
-    # dd/mm/yyyy or dd-mm-yyyy
-    m = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", s)
+    # dd/mm/yyyy, dd-mm-yyyy and dd.mm.yyyy. The DOTTED form is the one GR
+    # reference lines actually use ('दि. ३०.१०.२०१०'); omitting it left 2 of
+    # every 3 cited dates unparsed, and the cited date is what tells two
+    # same-numbered GRs apart when the graph resolves a reference.
+    # The lookaround stops a GR number ('१४०२५/११/२०२३') being read as a date:
+    # a date component may not sit next to another digit or separator.
+    m = re.search(r"(?<![\d/.\-])(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})(?![\d])", s)
     if m:
-        return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+        year = int(m.group(3))
+        if year < 100:                       # '02.09.13' -> 2013
+            year += 2000 if year < 70 else 1900
+        iso = _iso(year, int(m.group(2)), int(m.group(1)))
+        if iso:
+            return iso
 
     # yyyy-mm-dd already
     m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
     if m:
-        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+        return _iso(int(m.group(1)), int(m.group(2)), int(m.group(3)))
     return None
 
 
@@ -85,7 +164,7 @@ def _first(pattern, text, flags=0):
 
 # label alternatives (Marathi | English), used in several patterns below
 _L_NUMBER = r"(?:शासन निर्णय क्रमांक|शासन निर्णय क्र\.?|क्रमांक|Government Resolution No\.?|G\.?\s*R\.?\s*No\.?)"
-_L_DATE = r"(?:दिनांक|Dated|Date)"
+_L_DATE = r"(?:दिनांक|तारीख|Dated|Date)"
 _L_SUBJECT = r"(?:विषय|Subject)"
 _L_SECTION_END = r"(?:वाचा|संदर्भ|प्रस्तावना|शासन निर्णय|Reference|Preamble|Read)"
 
@@ -100,36 +179,141 @@ def _language(text):
     return "mr" if deva >= latin else "en"
 
 
-def _references(text, own=None):
-    """GR numbers cited in the 'वाचा' / 'संदर्भ' reference section — the
-    documents this GR builds on or replaces. A GR number is a slash-bearing
-    token like 'संकीर्ण-२०२३/प्र.क्र.४५/तांशि-४'. Scoped to the reference
-    section so body prose doesn't leak in; `own` (this GR's own number) is
-    excluded so a document never lists itself. De-duplicated, order preserved."""
-    # Terminators must be a section HEADER (word + colon). Without the colon,
-    # the '.*?' would stop at the "शासन निर्णय क्रमांक ..." that OPENS the वाचा
-    # value itself and capture nothing — the reference lives inside that phrase.
-    m = re.search(rf"(?:वाचा|संदर्भ|Reference|Read)\s*[:：ःन.\-]?(.*?)(?=\n\s*(?:विषय|प्रस्तावना|शासन निर्णय|Subject|Preamble)\s*[:：ः]|\Z)",
+# --------------------------------------------------------------------------- #
+# reference extraction
+#
+# A GR number CONTAINS SPACES ('एनजीसी-२०१०/(१९३/१०) /मशि-४'), so it cannot be
+# matched as a whitespace-bounded token — that is what the first version did,
+# and it produced fragments ('२०११/प्रक्र', '१३६/विशि-३') that resolved against
+# nothing: 2% of graph edges. What actually delimits a number in a reference
+# line is punctuation and the date that follows it:
+#
+#   वाचा : १) शासन निर्णय, उच्च व तंत्र शिक्षण विभाग, क्र. एनजीसी-२०१०/(१९३/१०) /मशि-४, दि. ३०.१०.२०१०.
+#          └item┘└─ document type ─┘└──── department ────┘└label┘└──── the number ────┘  └── the date ──┘
+#
+# So the block is cut into numbered ITEMS, each item into comma-separated
+# SEGMENTS, and each segment is trimmed at its date. That mirrors what extract()
+# already does for the document's own number.
+# --------------------------------------------------------------------------- #
+
+# The date that trails a number: 'दि. ३०.१०.२०१०', 'दिनांक - १८/०७/२०११', 'Dated 3 May 2024'.
+# The lookbehind keeps 'दि' from firing inside a Devanagari word.
+_DATE_TAIL = re.compile(r"(?<![ऀ-ॿ])(?:दिनांक|दिनाक|दि|Dated|Dt|Date)\s*[.:：ः\-–]*\s*(?=[\d०-९])")
+# A date at the START of a piece, left over after the split above.
+_LEADING_DATE = re.compile(r"^\s*[\d०-९]{1,4}[/.\-][\d०-९]{1,2}[/.\-][\d०-९]{2,4}\.?\s*")
+# Item numbering: '१)', '(२)', '3.' — at the start of a line or inline.
+_ITEM_LEAD = re.compile(r"^\s*[(\[]?\s*[\d०-९]{1,2}\s*[)\].]\s*")
+_ITEM_SPLIT = re.compile(r"\n|(?<=[।.\s])[(\[]?[\d०-९]{1,2}[)\]](?=\s)")
+_SEG_SPLIT = re.compile(r"[,;।]")
+# The label a number follows: 'शासन निर्णय, <विभाग>, क्रमांक : <number>'.
+_NUM_LABEL = re.compile(r"(?:क्रमांक|क्रमाक|क्र|No|Number)\s*[.:：ः\-–]*\s*")
+# A date is slash-bearing too, so it must be rejected explicitly.
+_BARE_DATE = re.compile(r"^[\d०-९]{1,4}[/.\-][\d०-९]{1,2}[/.\-][\d०-९]{2,4}\.?$")
+
+
+def _trim_number(s):
+    """Cut a captured GR number at the date that follows it and strip the
+    punctuation OCR leaves behind. Shared by extract() and the reference scan so
+    both sides of a match are normalised the same way."""
+    if not s:
+        return None
+    s = _DATE_TAIL.split(s)[0]
+    s = re.split(r"\s{2,}|।", s)[0]
+    return " ".join(s.split()).strip(" .,;:।-–") or None
+
+
+def _after_label(piece):
+    """Drop the 'शासन निर्णय ... क्रमांक :' preamble in front of a number.
+
+    The trap: 'क्र' also occurs INSIDE most GR numbers ('संकीर्ण-२०२३/प्र.क्र.४५'),
+    so stripping at the first label match truncates the number to '४५'. The
+    discriminator is the slash — a number's internal 'क्र' always sits after
+    one, an introducing label never does. So: take the LAST label whose preamble
+    contains no '/'. Last, not first, because a reference line can carry two
+    ('शासन निर्णय क्र. <विभाग> क्र. <number>').
+    """
+    cut = None
+    for m in _NUM_LABEL.finditer(piece):
+        if "/" in piece[:m.start()]:
+            break
+        cut = m.end()
+    return piece[cut:] if cut is not None else None
+
+
+def _is_number(s):
+    """Does this look like a GR/letter number rather than prose or a date?
+    Deliberately shape-based: a number has a slash (structural in every GR
+    number), at least one digit, and is short."""
+    if not s or "/" not in s or len(s) > 80:
+        return False
+    if not re.search(r"[\d०-९]", s):
+        return False
+    return not _BARE_DATE.match(s)
+
+
+def reference_block(text):
+    """The raw text of the 'वाचा' / 'संदर्भ' (references) section, or "".
+
+    Public because more than one thing needs the same scope: `_reference_entries`
+    pulls GR numbers out of it, and `scripts/cited_departments.py` counts which
+    DEPARTMENTS are named in it (which is how the ingestion order for PLAN
+    Phase 6 was chosen — see CHECKLIST). Keeping one definition of "where the
+    references are" means those two measurements can never drift apart.
+
+    Terminators must be a section HEADER (word + colon). Without the colon, the
+    '.*?' would stop at the "शासन निर्णय क्रमांक ..." that OPENS the वाचा value
+    itself and capture nothing — the reference lives inside that phrase.
+    """
+    m = re.search(r"(?:वाचा|संदर्भ|Reference|Read)\s*[:：ःन.\-]?(.*?)"
+                  r"(?=\n\s*(?:विषय|प्रस्तावना|शासन निर्णय|Subject|Preamble)\s*[:：ः]|\Z)",
                   text, re.DOTALL)
-    scope = m.group(1) if m else ""
+    return m.group(1) if m else ""
+
+
+def _reference_entries(text, own=None):
+    """References in the 'वाचा' / 'संदर्भ' block, as {'number', 'date'} dicts.
+
+    The date matters: 2,138 canonical numbers in the corpus are shared by more
+    than one document (a GR and its corrigendum, or an OCR collision), and the
+    cited date is what tells them apart when the graph resolves the reference.
+
+    Scoped to the reference section so body prose doesn't leak in; `own` (this
+    GR's own number) is dropped so a document never lists itself. De-duplicated
+    on the canonical form, order preserved.
+    """
+    scope = reference_block(text)
+    own_canon = canonical_number(own)
     seen, out = set(), []
-    # A GR number token starts with a letter/Devanagari char and contains a
-    # slash — e.g. 'एनजीसी-२०१०/(१९३/१०)'. Requiring the leading char rejects
-    # OCR fragments like '/मशि-४' that a space split off the real number.
-    # NOTE: reference sections are also full of DATES ('दि.०८/०३/२०१७'), which
-    # are slash-bearing too — filter those out so references stay GR numbers.
-    date_tok = re.compile(r"^(?:दि\.?|दिनांक)?\s*[\d०-९]{1,2}[/.\-][\d०-९]{1,2}[/.\-][\d०-९]{2,4}\.?$")
-    for tok in re.findall(r"[A-Za-zऀ-ॿ][^\s,]*/[^\s,]+", scope):
-        tok = tok.strip(" .,।")
-        if not tok or tok in seen:
-            continue
-        if tok.startswith("दि") or date_tok.match(tok):   # a date, not a GR number
-            continue
-        if own is not None and (tok in own or own in tok):  # never list itself
-            continue
-        seen.add(tok)
-        out.append(tok)
+
+    for item in _ITEM_SPLIT.split(scope):
+        item = _ITEM_LEAD.sub("", item)
+        # One date per item — the date of the order being cited.
+        date = None
+        for tail in _DATE_TAIL.split(item)[1:]:
+            date = _parse_date(tail[:40])
+            if date:
+                break
+        for seg in _SEG_SPLIT.split(item):
+            for piece in _DATE_TAIL.split(seg):
+                piece = _LEADING_DATE.sub("", piece)
+                # Prefer the label-stripped form, but fall back to the raw piece:
+                # plenty of references print the number with no label at all.
+                cand = _trim_number(_after_label(piece))
+                if not _is_number(cand):
+                    cand = _trim_number(piece)
+                if not _is_number(cand):
+                    continue
+                canon = canonical_number(cand)
+                if not canon or canon in seen or canon == own_canon:
+                    continue
+                seen.add(canon)
+                out.append({"number": cand, "date": date})
     return out
+
+
+def _references(text, own=None):
+    """The cited GR numbers only — the historical shape of this field."""
+    return [e["number"] for e in _reference_entries(text, own=own)]
 
 
 def extract(text):
@@ -148,10 +332,9 @@ def extract(text):
     # so capture to end of line, not just the first token.
     number = _first(r"(?:शासन निर्णय|शासन आदेश|आदेश|परिपत्रक|अधिसूचना)\s*(?:क्रमांक|क्र)\s*[.:：ः]*\s*([^\n]+)", text) \
         or _first(r"(?:Government Resolution No\.?|Government Order No\.?|G\.?\s*R\.?\s*No\.?)\s*[:：]?\s*([^\n]+)", text)
+    number = _trim_number(number)
     if number:
-        number = re.split(r"\s{2,}|।", number)[0].strip(" .,।-")
-        if number:
-            meta["gr_number"] = number[:80]
+        meta["gr_number"] = number[:80]
 
     date_raw = _first(rf"{_L_DATE}\s*[:：-]?\s*([^\n]+)", text)
     if date_raw:
@@ -193,9 +376,17 @@ def extract(text):
     if lang:
         meta["language"] = lang
 
-    refs = _references(text, own=meta.get("gr_number"))
-    if refs:
+    # Both shapes are returned: `references` (numbers only) is what officer.py,
+    # the API and the older corpora already speak; `reference_details` adds the
+    # cited date, which the knowledge graph uses to disambiguate two documents
+    # that share a GR number.
+    entries = _reference_entries(text, own=meta.get("gr_number"))
+    if entries:
+        meta["reference_details"] = entries
+        refs = [e["number"] for e in entries]
         meta["references"] = refs
+    else:
+        refs = []
 
     # A GR that both cites another and says 'अधिक्रमित'/'superseded' is replacing it.
     if refs and re.search(r"अधिक्रमित|अधिक्रमीत|supersed", text, re.IGNORECASE):
